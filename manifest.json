@@ -1,9 +1,0 @@
-{
-  "short_name": "Become",
-  "name": "Become — Beauty Treatment Tracker",
-  "start_url": ".",
-  "display": "standalone",
-  "theme_color": "#B4915F",
-  "background_color": "#FAF7F2",
-  "icons": [{"src": "logo192.png", "sizes": "192x192", "type": "image/png"}]
-}
