@@ -257,7 +257,7 @@ export default function Become(){
   const [showCurrPicker,setShowCurrPicker]=useState(false);
   const [profilePhoto,setProfilePhoto]=useState(null);
   const [showEditProfile,setShowEditProfile]=useState(false);
-  const [profileForm,setProfileForm]=useState({name:"Sophia Chen",email:"sophia.chen@gmail.com",phone:"+66 89 123 4567"});
+  const [profileForm,setProfileForm]=useState({name:"",email:"",phone:""});
   const profilePhotoRef=useRef(null);
   const [showPrivacy,setShowPrivacy]=useState(false);
   const [showTerms,setShowTerms]=useState(false);
