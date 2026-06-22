@@ -272,7 +272,7 @@ export default function Become(){
   const sortedSessions=sel?[...sel.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
 
-  useEffect(()=>{getRedirectResult(auth).then(r=>{if(r&&r.user){setProfileForm({name:r.user.displayName||"",email:r.user.email||"",phone:""});setAuthScreen("app");}});},[]); const urgent=useMemo(()=>treatments.filter(t=>{
+  useEffect(()=>{getRedirectResult(auth).then(r=>{if(r&&r.user){setProfileForm({name:r.user.displayName||"",email:r.user.email||"",phone:""});setAuthScreen("app");}}).catch(e=>console.error(e));},[]); const urgent=useMemo(()=>treatments.filter(t=>{
     const e=daysUntil(t.expiryDate),r=t.totalSessions-t.sessions.length;
     return(e!==null&&e<=30&&e>=0)||r===0;
   }),[treatments]);
