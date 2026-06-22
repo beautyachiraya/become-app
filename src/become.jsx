@@ -1,5 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from "react";
+import { auth } from "./firebase";
+import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from "firebase/auth";
 
+const googleProvider = new GoogleAuthProvider();
 const B = {
   caramel:"#B4915F", caramelDk:"#8C6E40", caramelLt:"#D4B080",
   ivory:"#FAF7F2", ivoryDk:"#F5EFE6", linen:"#EDE5D8",
@@ -419,7 +422,7 @@ export default function Become(){
           </div>
           <div className="rule"/>
           <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:20}}>
-            <button className="soc" onClick={()=>setOauthProvider("google")}>{gLogo} Continue with Google</button>
+            <button className="soc" onClick={async()=>{try{const r=await signInWithPopup(auth,googleProvider);if(r.user)setAuthScreen("app");}catch(e){alert(e.message);}}}>{gLogo} Continue with Google</button>
             <button className="soc" style={{background:"#1877F2",border:"none",color:"#FFF"}} onClick={()=>setOauthProvider("facebook")}>{fLogo} Continue with Facebook</button>
             <button className="soc" style={{background:"#1C1612",border:"none",color:"#FFF"}} onClick={()=>setOauthProvider("apple")}>{aLogo} Continue with Apple</button>
           </div>
@@ -429,7 +432,7 @@ export default function Become(){
           <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:24}}>
             <input className="inp" placeholder="Email address" value={loginForm.email} onChange={e=>setLoginForm({...loginForm,email:e.target.value})}/>
             <input className="inp" type="password" placeholder="Password" value={loginForm.password} onChange={e=>setLoginForm({...loginForm,password:e.target.value})}/>
-            <button className="btn btn-c" onClick={()=>sendOtp("email",loginForm.email||"your email")}>Sign In</button>
+            <button className="btn btn-c" onClick={async()=>{try{await signInWithEmailAndPassword(auth,loginForm.email,loginForm.password);setAuthScreen("app");}catch(e){alert(e.message);}}}>Sign In</button>
           </div>
           <p style={{textAlign:"center",fontSize:13,color:"#9A8A78",marginBottom:32}}>
             Don't have an account?{" "}
