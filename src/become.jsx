@@ -331,7 +331,7 @@ export default function Become(){
   const S=`
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
     *{box-sizing:border-box;margin:0;padding:0;}
-    .app{max-width:430px;margin:0 auto;min-height:100vh;}
+    .app{max-width:430px;margin:0 auto;min-height:100vh;} body{background:linear-gradient(135deg,#EDE5D8 0%,#F5EFE6 40%,#FAF7F2 100%);min-height:100vh;}
     .card{background:#FFF;border-radius:20px;box-shadow:0 2px 16px rgba(28,22,18,0.06);border:1px solid rgba(180,145,95,0.1);}
     .tcard{background:#FFF;border-radius:20px;box-shadow:0 2px 16px rgba(28,22,18,0.06);border:1px solid rgba(180,145,95,0.1);cursor:pointer;transition:all 0.2s;}
     .tcard:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(28,22,18,0.1);border-color:rgba(180,145,95,0.22);}
@@ -394,7 +394,7 @@ export default function Become(){
   const aLogo=<svg width="16" height="20" viewBox="0 0 24 24" fill="white"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>;
 
   return (
-    <div style={{minHeight:"100vh",background:"#FAF7F2",fontFamily:"'DM Sans',sans-serif",color:"#1C1612"}}>
+    <div style={{minHeight:"100vh",background:"transparent",fontFamily:"'DM Sans',sans-serif",color:"#1C1612"}}>
       <style>{S}</style>
 
       {/* Policy modals — rendered at root so accessible from any screen */}
