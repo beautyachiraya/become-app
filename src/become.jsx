@@ -272,7 +272,7 @@ export default function Become(){
   const sortedSessions=sel?[...sel.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
 
-  useEffect(()=>{getRedirectResult(auth).then(r=>{if(r&&r.user){setProfileForm({name:r.user.displayName||"",email:r.user.email||"",phone:""});setAuthScreen("app");}}).catch(e=>console.error(e));},[]); const urgent=useMemo(()=>treatments.filter(t=>{
+  const urgent=useMemo(()=>treatments.filter(t=>{
     const e=daysUntil(t.expiryDate),r=t.totalSessions-t.sessions.length;
     return(e!==null&&e<=30&&e>=0)||r===0;
   }),[treatments]);
@@ -422,7 +422,7 @@ export default function Become(){
           </div>
           <div className="rule"/>
           <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:20}}>
-            <button className="soc" onClick={()=>signInWithRedirect(auth,googleProvider)}>{gLogo} Continue with Google</button>
+            <button className="soc" onClick={async()=>{try{const r=await signInWithPopup(auth,googleProvider);if(r.user){setProfileForm({name:r.user.displayName||"",email:r.user.email||"",phone:""});setAuthScreen("app");}}catch(e){alert(e.message);}}}>{gLogo} Continue with Google</button>
             <button className="soc" style={{background:"#1877F2",border:"none",color:"#FFF"}} onClick={()=>setOauthProvider("facebook")}>{fLogo} Continue with Facebook</button>
             <button className="soc" style={{background:"#1C1612",border:"none",color:"#FFF"}} onClick={()=>setOauthProvider("apple")}>{aLogo} Continue with Apple</button>
           </div>
