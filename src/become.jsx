@@ -236,7 +236,7 @@ export default function Become(){
   const oR0=useRef(),oR1=useRef(),oR2=useRef(),oR3=useRef(),oR4=useRef();
   const otpRefs=[oR0,oR1,oR2,oR3,oR4];
 
-  const [treatments,setTreatments]=useState(SAMPLE_DATA);
+  const [treatments,setTreatments]=useState([]);
   const [appTab,setAppTab]=useState("home");
   const [view,setView]=useState("home");
   const [selectedId,setSelectedId]=useState(null);
