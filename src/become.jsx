@@ -293,8 +293,8 @@ export default function Become(){
   }
 function logSession(){
     const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:null};
-    const updated=treatments.map(t=>t.id!==selectedId?t:{...t,sessions:[...t.sessions,newSession]});
-    const updatedT=updated.find(t=>t.id===selectedId);
+    const updated=treatments.map(t=>String(t.id)!==String(selectedId)?t:{...t,sessions:[...t.sessions,newSession]});
+    const updatedT=updated.find(t=>String(t.id)===String(selectedId));
     setTreatments(updated);
     const user=auth.currentUser;
     if(user&&updatedT){
