@@ -292,7 +292,7 @@ export default function Become(){
     else{setLogTargetIdx(idx);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}
   }
 function logSession(){
-    const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:logForm.photo};
+    const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:null};
     const updated=treatments.map(t=>t.id!==selectedId?t:{...t,sessions:[...t.sessions,newSession]});
     setTreatments(updated);
     const user=auth.currentUser;
