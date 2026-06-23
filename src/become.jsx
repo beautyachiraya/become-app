@@ -294,11 +294,11 @@ export default function Become(){
 function logSession(){
     const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:null};
     const updated=treatments.map(t=>t.id!==selectedId?t:{...t,sessions:[...t.sessions,newSession]});
+    const updatedT=updated.find(t=>t.id===selectedId);
     setTreatments(updated);
     const user=auth.currentUser;
-    if(user){
-      const updatedT=updated.find(t=>t.id===selectedId);
-      if(updatedT)setDoc(doc(db,"users",user.uid,"treatments",String(selectedId)),updatedT);
+    if(user&&updatedT){
+      setDoc(doc(db,"users",user.uid,"treatments",String(updatedT.id)),updatedT);
     }
     setShowLog(false);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});
   }
