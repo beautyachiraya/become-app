@@ -291,9 +291,20 @@ export default function Become(){
     if(session){setSessionIdx(idx);setView("session");}
     else{setLogTargetIdx(idx);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}
   }
-  function logSession(){
-    setTreatments(treatments.map(t=>t.id!==selectedId?t:{...t,sessions:[...t.sessions,{id:Date.now(),date:logForm.date,note:logForm.note,photo:logForm.photo}]}));
-    setShowLog(false);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});
+function logSession(){
+    const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:null};
+    const updatedTreatments=treatments.map(t=>{
+      if(String(t.id)===String(selectedId)){
+        const updatedT={...t,sessions:[...t.sessions,newSession]};
+        const user=auth.currentUser;
+        if(user){setDoc(doc(db,"users",user.uid,"treatments",String(t.id)),updatedT);}
+        return updatedT;
+      }
+      return t;
+    });
+    setTreatments(updatedTreatments);
+    setShowLog(false);
+    setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});
   }
   function updatePhoto(photo){
     setTreatments(prev=>prev.map(t=>{
