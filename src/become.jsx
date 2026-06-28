@@ -640,7 +640,7 @@ function saveEdit(){
                       </svg>
                     </div>
                     <input ref={profilePhotoRef} type="file" accept="image/*" style={{display:"none"}}
-                      onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setProfilePhoto(ev.target.result);r.readAsDataURL(f);const user=auth.currentUser;if(user){uploadBytes(ref(storage,`users/${user.uid}/profile`),f).then(()=>getDownloadURL(ref(storage,`users/${user.uid}/profile`)).then(url=>setProfilePhotoURL(url)));}}}}}/>
+                      onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setProfilePhoto(ev.target.result);r.readAsDataURL(f);const user=auth.currentUser;if(user){const pRef=ref(storage,"users/"+user.uid+"/profile");uploadBytes(pRef,f).then(()=>getDownloadURL(pRef).then(url=>setProfilePhotoURL(url)));}}}}}/>
                   </div>
                   <div>
                     <p style={{fontSize:17,fontWeight:600}}>{profileForm.name}</p>
