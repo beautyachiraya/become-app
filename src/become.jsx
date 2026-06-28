@@ -272,7 +272,7 @@ export default function Become(){
   const sortedSessions=sel?[...sel.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
 
-  useEffect(()=>{   if(authScreen==="app"){     const user=auth.currentUser;     if(!user)return;     getDocs(collection(db,"users",user.uid,"treatments")).then(snap=>{       if(!snap.empty){         setTreatments(snap.docs.map(d=>d.data()));       }     });   } },[authScreen]);  const urgent=useMemo(()=>treatments.filter(t=>{
+  useEffect(()=>{   if(authScreen==="app"){     const user=auth.currentUser;     if(!user)return;     getDocs(collection(db,"users",user.uid,"treatments")).then(snap=>{       if(!snap.empty){         setTreatments(snap.docs.map(d=>d.data()));       }     });   } },[authScreen]);  useEffect(()=>{   const user=auth.currentUser;   if(!user||authScreen!=="app"||treatments.length===0)return;   treatments.forEach(t=>{     setDoc(doc(db,"users",user.uid,"treatments",String(t.id)),t);   }); },[treatments]);  const urgent=useMemo(()=>treatments.filter(t=>{
     const e=daysUntil(t.expiryDate),r=t.totalSessions-t.sessions.length;
     return(e!==null&&e<=30&&e>=0)||r===0;
   }),[treatments]);
