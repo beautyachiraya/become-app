@@ -294,7 +294,7 @@ export default function Become(){
 async function logSession(){
     const user=auth.currentUser;
     let photoURL=null;
-    if(logForm.photo&&user){
+if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
       const blob=await fetch(logForm.photo).then(r=>r.blob());
       const photoRef=ref(storage,`users/${user.uid}/photos/${Date.now()}`);
       await uploadBytes(photoRef,blob);
