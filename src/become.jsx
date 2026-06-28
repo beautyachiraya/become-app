@@ -332,13 +332,13 @@ if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
   function deleteTreatment(id){   setTreatments(treatments.filter(t=>t.id!==id));   const user=auth.currentUser;   if(user){deleteDoc(doc(db,"users",user.uid,"treatments",String(id)));}   setView("home"); }
   function goToDetail(id){setSelectedId(id);setDetailTab("sessions");setView("detail");}
   function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||""});setShowEdit(true);}
- function saveEdit(){
+function saveEdit(){
     if(!editForm||!sel)return;
     const freq=editForm.frequencyLabel==="Custom"?parseInt(editForm.customDays):editForm.frequency;
     const updatedT={...sel,name:editForm.name,clinic:editForm.clinic,brandUnit:editForm.brandUnit,totalSessions:parseInt(editForm.totalSessions),frequency:freq,frequencyLabel:editForm.frequencyLabel,expiryDate:editForm.expiryDate,notes:editForm.notes};
-    setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
     const user=auth.currentUser;
     if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updatedT);}
+    setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
     setShowEdit(false);
   }
   function openEditSession(session){setEditSessionForm({date:session.date,note:session.note||""});setShowEditSession(true);}
