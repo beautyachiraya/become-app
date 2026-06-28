@@ -52,7 +52,7 @@ const FREQUENCIES = [
   {label:"Every 2 months",days:60},{label:"Every 3 months",days:90},
   {label:"Every 6 months",days:180},{label:"Custom",days:null},
 ];
-const LANGUAGES = ["English","Thai — ภาษาไทย","Chinese — 中文","Japanese — 日本語","Korean — 한국어","French — Français","Arabic — العربية"];
+const LANGUAGES = ["English","Thai — ภาษาไทย"];
 const CURRENCIES = ["THB — Thai Baht ฿","USD — US Dollar $","EUR — Euro €","GBP — British Pound £","SGD — Singapore Dollar S$","JPY — Japanese Yen ¥","AED — UAE Dirham د.إ","CNY — Chinese Yuan ¥"];
 const COUNTRY_CODES = ["+66 TH","+1 US","+44 UK","+65 SG","+81 JP","+82 KR","+86 CN","+33 FR","+971 AE"];
 
