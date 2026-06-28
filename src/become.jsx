@@ -485,11 +485,11 @@ function saveEdit(){
                 <input className="inp" placeholder="89 123 4567" value={signupForm.phone} onChange={e=>setSignupForm({...signupForm,phone:e.target.value})}/>
               </div>
             </div>
-            <div><span className="lbl">Password</span><input className="inp" type="password" placeholder="At least 8 characters" value={signupForm.password} onChange={e=>setSignupForm({...signupForm,password:e.target.value})}/></div>
+            <div><span className="lbl">Password</span><input className="inp" type="password" placeholder="At least 8 characters" value={signupForm.password} onChange={e=>setSignupForm({...signupForm,password:e.target.value})}/></div> <div><span className="lbl">Confirm Password</span><input className="inp" type="password" placeholder="Re-enter your password" value={signupForm.confirmPassword||""} onChange={e=>setSignupForm({...signupForm,confirmPassword:e.target.value})}/></div>
             <div className="rule"/>
             <p style={{fontSize:12,color:"#9A8A78",textAlign:"center"}}>Verify with</p>
             <div style={{display:"flex",gap:10}}>
-              <button className="btn btn-c" style={{flex:1,opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted} onClick={async()=>{try{await createUserWithEmailAndPassword(auth,signupForm.email,signupForm.password);setProfileForm({name:signupForm.name,email:signupForm.email,phone:signupForm.phone});setAuthScreen("app");}catch(e){alert(e.message);}}}>Sign Up</button>
+              <button className="btn btn-c" style={{flex:1,opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted} onClick={async()=>{if(signupForm.password!==signupForm.confirmPassword){alert("Passwords do not match!");return;}try{await createUserWithEmailAndPassword(auth,signupForm.email,signupForm.password);setProfileForm({name:signupForm.name,email:signupForm.email,phone:signupForm.phone});setAuthScreen("app");}catch(e){alert(e.message);}}}>Sign Up</button>
             </div>
             <div className="rule"/>
             <button className="soc" style={{opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted} onClick={()=>setOauthProvider("google")}>{gLogo} Sign up with Google</button>
