@@ -255,7 +255,7 @@ export default function Become(){
   const [currency,setCurrency]=useState("THB — Thai Baht ฿");
   const [showLangPicker,setShowLangPicker]=useState(false);
   const [showCurrPicker,setShowCurrPicker]=useState(false);
-  const [profilePhoto,setProfilePhoto]=useState(null);
+  const [profilePhoto,setProfilePhoto]=useState(null); const [profilePhotoURL,setProfilePhotoURL]=useState(null);
   const [showEditProfile,setShowEditProfile]=useState(false);
   const [profileForm,setProfileForm]=useState({name:"",email:"",phone:""});
   const profilePhotoRef=useRef(null);
