@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { auth, db } from "./firebase"; import { collection, doc, setDoc, getDocs, deleteDoc } from "firebase/firestore";
+import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, setDoc, getDocs, deleteDoc } from "firebase/firestore";
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from "firebase/auth";
 
 const googleProvider = new GoogleAuthProvider(); googleProvider.setCustomParameters({prompt:"select_account"});
@@ -291,8 +291,16 @@ export default function Become(){
     if(session){setSessionIdx(idx);setView("session");}
     else{setLogTargetIdx(idx);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}
   }
-function logSession(){
-    const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:null};
+async function logSession(){
+    const user=auth.currentUser;
+    let photoURL=null;
+    if(logForm.photo&&user){
+      const blob=await fetch(logForm.photo).then(r=>r.blob());
+      const photoRef=ref(storage,`users/${user.uid}/photos/${Date.now()}`);
+      await uploadBytes(photoRef,blob);
+      photoURL=await getDownloadURL(photoRef);
+    }
+    const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:photoURL};
     const updatedTreatments=treatments.map(t=>{
       if(String(t.id)===String(selectedId)){
         const updatedT={...t,sessions:[...t.sessions,newSession]};
