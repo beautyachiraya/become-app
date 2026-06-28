@@ -489,7 +489,7 @@ function saveEdit(){
             <div className="rule"/>
             <p style={{fontSize:12,color:"#9A8A78",textAlign:"center"}}>Verify with</p>
             <div style={{display:"flex",gap:10}}>
-              <button className="btn btn-c" style={{flex:1,opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted} onClick={()=>sendOtp("email",signupForm.email||"your email")}>Email OTP</button>
+              <button className="btn btn-c" style={{flex:1,opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted} onClick={async()=>{try{await createUserWithEmailAndPassword(auth,signupForm.email,signupForm.password);setProfileForm({name:signupForm.name,email:signupForm.email,phone:signupForm.phone});setAuthScreen("app");}catch(e){alert(e.message);}}}>Email OTP</button>
               <button className="btn btn-g" style={{flex:1,opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted} onClick={()=>sendOtp("phone",signupForm.phone?`${signupForm.countryCode} ${signupForm.phone}`:"your number")}>Phone OTP</button>
             </div>
             <div className="rule"/>
