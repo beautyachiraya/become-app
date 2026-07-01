@@ -342,11 +342,14 @@ function saveEdit(){
     setShowEdit(false);
   }
   function openEditSession(session){setEditSessionForm({date:session.date,note:session.note||""});setShowEditSession(true);}
-  function saveEditSession(){
+ function saveEditSession(){
     if(!editSessionForm||!sel||sessionIdx===null)return;
     const sorted=[...sel.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
     const target=sorted[sessionIdx];
-    setTreatments(treatments.map(t=>t.id!==sel.id?t:{...t,sessions:t.sessions.map(s=>s.id===target.id?{...s,date:editSessionForm.date,note:editSessionForm.note}:s)}));
+    const updatedT={...sel,sessions:sel.sessions.map(s=>s.id===target.id?{...s,date:editSessionForm.date,note:editSessionForm.note}:s)};
+    setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
+    const user=auth.currentUser;
+    if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updatedT);}
     setShowEditSession(false);
   }
 
