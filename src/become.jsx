@@ -445,7 +445,6 @@ function saveEdit(){
           <div className="rule"/>
           <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:20}}>
             <button className="soc" onClick={async()=>{try{const r=await signInWithPopup(auth,googleProvider);if(r.user){setProfileForm({name:r.user.displayName||"",email:r.user.email||"",phone:""});setAuthScreen("app");}}catch(e){alert(e.message);}}}>{gLogo} Continue with Google</button>
-            <button className="soc" style={{background:"#1877F2",border:"none",color:"#FFF"}} onClick={()=>setOauthProvider("facebook")}>{fLogo} Continue with Facebook</button>
             <button className="soc" style={{background:"#1C1612",border:"none",color:"#FFF"}} onClick={()=>setOauthProvider("apple")}>{aLogo} Continue with Apple</button>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
