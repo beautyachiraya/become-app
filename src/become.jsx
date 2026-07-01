@@ -342,17 +342,18 @@ function saveEdit(){
     setShowEdit(false);
   }
   function openEditSession(session){setEditSessionForm({date:session.date,note:session.note||""});setShowEditSession(true);}
- function saveEditSession(){
-    if(!editSessionForm||!sel||sessionIdx===null)return;
-    const sorted=[...sel.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
+function saveEditSession(){
+    if(!editSessionForm||!selectedId||sessionIdx===null)return;
+    const currentTreatment=treatments.find(t=>String(t.id)===String(selectedId));
+    if(!currentTreatment)return;
+    const sorted=[...currentTreatment.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
     const target=sorted[sessionIdx];
-    const updatedT={...sel,sessions:sel.sessions.map(s=>s.id===target.id?{...s,date:editSessionForm.date,note:editSessionForm.note}:s)};
-    setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
+    const updatedT={...currentTreatment,sessions:currentTreatment.sessions.map(s=>s.id===target.id?{...s,date:editSessionForm.date,note:editSessionForm.note}:s)};
+    setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
     const user=auth.currentUser;
-    if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updatedT);}
+    if(user){setDoc(doc(db,"users",user.uid,"treatments",String(selectedId)),updatedT);}
     setShowEditSession(false);
   }
-
   const S=`
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
     *{box-sizing:border-box;margin:0;padding:0;}
