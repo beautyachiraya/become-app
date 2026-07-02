@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, setDoc, getDocs, deleteDoc } from "firebase/firestore";
+import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, setDoc, getDocs, deleteDoc, getDoc } from "firebase/firestore";
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword } from "firebase/auth";
 
 const googleProvider = new GoogleAuthProvider(); googleProvider.setCustomParameters({prompt:"select_account"});
