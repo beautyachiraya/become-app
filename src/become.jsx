@@ -527,39 +527,7 @@ function saveEditSession(){
       )}
 
       {/* ── OTP ── */}
-      {authScreen==="otp"&&(
-        <div className="app" style={{padding:"0 24px"}}>
-          <div style={{paddingTop:56}}>
-            <button className="back" onClick={()=>setAuthScreen("signup")} style={{marginBottom:32}}>← Back</button>
-            <div style={{width:52,height:52,borderRadius:14,background:"#F5EFE6",border:"1px solid rgba(180,145,95,0.2)",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:20,fontSize:22}}>
-              {otpMethod==="email"?"✉":"📱"}
-            </div>
-            <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:400,marginBottom:8}}>Check your {otpMethod==="email"?"email":"phone"}</h2>
-            <p style={{fontSize:14,color:"#9A8A78",lineHeight:1.6,marginBottom:4}}>We sent a 5-digit code to</p>
-            <p style={{fontSize:14,fontWeight:600,marginBottom:32}}>{otpContact}</p>
-            <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:20}}>
-              {otp.map((val,i)=>(
-                <input key={i} ref={otpRefs[i]} className={`otp${val?" done":""}`} type="text" inputMode="numeric" maxLength={1} value={val}
-                  onChange={e=>handleOtpInput(e.target.value,i)} onKeyDown={e=>handleOtpKey(e,i)}/>
-              ))}
-            </div>
-            {otpError&&(
-              <div style={{background:"#FAEAEA",borderRadius:12,padding:"10px 16px",marginBottom:16,textAlign:"center"}}>
-                <p style={{fontSize:13,color:"#C05858",fontWeight:500}}>{otpError}</p>
-              </div>
-            )}
-            <div style={{background:"#F5EFE6",borderRadius:12,padding:"12px 16px",marginBottom:24}}>
-              <p style={{fontSize:12,color:"#9A8A78",textAlign:"center"}}>💡 Demo code: <strong style={{color:"#B4915F"}}>12345</strong></p>
-            </div>
-            <button className="btn btn-c" onClick={verifyOtp} disabled={otp.join("").length<5}>Verify & Continue</button>
-            <p style={{textAlign:"center",fontSize:13,color:"#9A8A78",marginTop:20}}>
-              Didn't receive it?{" "}
-              <button onClick={()=>{setOtp(["","","","",""]);setOtpError("");}} style={{background:"none",border:"none",fontSize:13,fontWeight:600,color:"#B4915F",cursor:"pointer",fontFamily:"inherit"}}>Resend</button>
-            </p>
-          </div>
-        </div>
-      )}
-
+      
       {/* ── APP ── */}
       {authScreen==="app"&&(
         <div className="app">
