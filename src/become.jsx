@@ -650,7 +650,7 @@ function saveEditSession(){
                     <div className="srow" onClick={()=>setShowTerms(true)}><p style={{fontSize:13,fontWeight:500}}>Terms of Service</p><span style={{color:"#C4B8A8"}}>›</span></div>
                   </div>
                 </div>
-                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){}setTreatments([]);setProfileForm({name:"",email:"",phone:""});setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
+                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){}setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
                 <p style={{fontSize:11,color:"#C4B8A8",textAlign:"center"}}>Become v1.0.0</p>
               </div>
             </div>
