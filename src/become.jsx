@@ -535,7 +535,7 @@ function saveEditSession(){
           {/* PROFILE */}
           {appTab==="profile"&&view==="home"&&(
             <div style={{paddingBottom:100}}>
-              <div style={{background:"linear-gradient(160deg,#EDE5D8,#F5EFE6,#FAF7F2)",padding:"60px 24px 28px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.12)",position:"relative",overflow:"hidden"}}>
+              <div style={{background:"linear-gradient(160deg,#EDE5D8,#F5EFE6,#FAF7F2)",padding:"max(60px, calc(44px + env(safe-area-inset-top))) 24px 28px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.12)",position:"relative",overflow:"hidden"}}>
                 {/* Sakura — profile header */}
                 <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:0}}>
                   <svg width="100%" height="100%" viewBox="0 0 430 180" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
@@ -659,7 +659,7 @@ function saveEditSession(){
           {/* HOME */}
           {appTab==="home"&&view==="home"&&(
             <div style={{paddingBottom:100}}>
-              <div style={{background:"linear-gradient(160deg,#EDE5D8,#F5EFE6,#FAF7F2)",padding:"60px 24px 28px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.12)",position:"relative",overflow:"hidden"}}>
+              <div style={{background:"linear-gradient(160deg,#EDE5D8,#F5EFE6,#FAF7F2)",padding:"max(60px, calc(44px + env(safe-area-inset-top))) 24px 28px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.12)",position:"relative",overflow:"hidden"}}>
                 {/* Sakura background pattern */}
                 <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:0}}>
                   <svg width="100%" height="100%" viewBox="0 0 430 220" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
