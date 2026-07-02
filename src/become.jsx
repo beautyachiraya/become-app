@@ -272,7 +272,7 @@ export default function Become(){
   const sortedSessions=sel?[...sel.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
 
-  useEffect(()=>{   if(authScreen==="app"){     const user=auth.currentUser;     if(!user)return;     import("firebase/firestore").then(({getDoc,doc:d})=>{getDoc(d(db,"users",user.uid,"profile","info")).then(snap=>{if(snap.exists())setProfileForm(snap.data());});}); getDocs(collection(db,"users",user.uid,"treatments")).then(snap=>{       if(!snap.empty){         setTreatments(snap.docs.map(d=>d.data()));       }     });   } },[authScreen]);  useEffect(()=>{},[]);  const urgent=useMemo(()=>treatments.filter(t=>{
+  useEffect(()=>{   if(authScreen==="app"){     const user=auth.currentUser;     if(!user)return;     import("firebase/firestore").then(({getDoc,doc:d})=>{getDoc(d(db,"users",user.uid,"profile","info")).then(snap=>{if(snap.exists())setProfileForm(snap.data());});}); getDoc(doc(db,"users",user.uid,"profile","info")).then(snap=>{if(snap.exists())setProfileForm(snap.data());}); getDocs(collection(db,"users",user.uid,"treatments")).then(snap=>{       if(!snap.empty){         setTreatments(snap.docs.map(d=>d.data()));       }     });   } },[authScreen]);  useEffect(()=>{},[]);  const urgent=useMemo(()=>treatments.filter(t=>{
     const e=daysUntil(t.expiryDate),r=t.totalSessions-t.sessions.length;
     return(e!==null&&e<=30&&e>=0)||r===0;
   }),[treatments]);
