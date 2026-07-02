@@ -356,8 +356,8 @@ function saveEditSession(){
   }
   const S=`
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
-    *{box-sizing:border-box;margin:0;padding:0;}
-    .app{max-width:430px;margin:0 auto;min-height:100vh;} body{background:linear-gradient(135deg,#EDE5D8 0%,#F5EFE6 40%,#FAF7F2 100%);min-height:100vh;}
+    *{box-sizing:border-box;margin:0;padding:0;} html,body{margin:0;padding:0;background:#FAF7F2;}
+    .app{max-width:430px;margin:0 auto;min-height:100vh;min-height:100dvh;} body{background:linear-gradient(135deg,#EDE5D8 0%,#F5EFE6 40%,#FAF7F2 100%);min-height:100vh;}
     .card{background:#FFF;border-radius:20px;box-shadow:0 2px 16px rgba(28,22,18,0.06);border:1px solid rgba(180,145,95,0.1);}
     .tcard{background:#FFF;border-radius:20px;box-shadow:0 2px 16px rgba(28,22,18,0.06);border:1px solid rgba(180,145,95,0.1);cursor:pointer;transition:all 0.2s;}
     .tcard:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(28,22,18,0.1);border-color:rgba(180,145,95,0.22);}
