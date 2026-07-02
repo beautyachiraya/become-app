@@ -1492,7 +1492,7 @@ function saveEditSession(){
                   <div><span className="lbl">Phone number</span>
                     <input className="inp" type="tel" placeholder="+66 89 123 4567" value={profileForm.phone} onChange={e=>setProfileForm({...profileForm,phone:e.target.value})}/>
                   </div>
-                  <button className="btn btn-c" style={{marginTop:4}} onClick={()=>setShowEditProfile(false)} disabled={!profileForm.name||!profileForm.email}>
+                 <button className="btn btn-c" style={{marginTop:4}} onClick={()=>{const user=auth.currentUser;if(user){setDoc(doc(db,"users",user.uid,"profile","info"),profileForm);}setShowEditProfile(false);}} disabled={!profileForm.name||!profileForm.email}>
                     Save Changes
                   </button>
                   <button onClick={()=>setShowEditProfile(false)}
