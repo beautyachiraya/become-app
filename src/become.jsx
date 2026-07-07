@@ -71,7 +71,7 @@ function fmtShort(d){if(!d)return"—";return new Date(d).toLocaleDateString("en
 function daysUntil(d){if(!d)return null;const t=new Date();t.setHours(0,0,0,0);return Math.round((new Date(d)-t)/86400000);}
 function addDays(d,n){if(!d)return null;const dt=new Date(d);dt.setDate(dt.getDate()+n);return dt.toISOString().split("T")[0];}
 function getNext(t){if(!t.sessions.length)return null;const last=[...t.sessions].sort((a,b)=>new Date(b.date)-new Date(a.date))[0];return addDays(last.date,t.frequency);}
-function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";}
+function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";} function t(key){const lang=language==="Thai — ภาษาไทย"?"th":"en";return T[lang][key]||T.en[key];}
 
 // ─── MOCK OAUTH ───────────────────────────────────────────────────
 function OAuthScreen({provider,onSuccess,onCancel}){
