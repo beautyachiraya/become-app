@@ -621,7 +621,7 @@ function saveEditSession(){
               </div>
               <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:16}}>
                 <div>
-                  <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase",marginBottom:10,paddingLeft:4}}>Account</p>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,paddingLeft:4}}>                   <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase",margin:0}}>Account</p>                   <button onClick={()=>setShowEditProfile(true)} style={{background:"rgba(255,255,255,0.7)",border:"1px solid rgba(180,145,95,0.25)",borderRadius:50,padding:"6px 14px",fontFamily:"'DM Sans',sans-serif",fontSize:11,fontWeight:600,color:"#B4915F",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#B4915F" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>                     Edit                   </button>                 </div>
                   <div className="card" style={{padding:"4px 20px"}}>
                     {[{l:"Full Name",v:profileForm.name},{l:"Email",v:profileForm.email},{l:"Phone",v:profileForm.phone}].map(r=>(
                       <div key={r.l} className="srow" style={{cursor:"default"}}><p style={{fontSize:13,fontWeight:500}}>{r.l}</p><p style={{fontSize:13,color:"#9A8A78"}}>{r.v}</p></div>
