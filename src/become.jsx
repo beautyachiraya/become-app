@@ -583,13 +583,7 @@ function saveEditSession(){
                 <div style={{position:"relative",zIndex:1}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
                   <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:36,fontWeight:300}}>Profile</h1>
-                  <button onClick={()=>setShowEditProfile(true)}
-                    style={{background:"rgba(255,255,255,0.7)",border:"1px solid rgba(180,145,95,0.25)",borderRadius:50,padding:"8px 18px",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,color:"#B4915F",cursor:"pointer",display:"flex",alignItems:"center",gap:6,backdropFilter:"blur(4px)",transition:"all 0.15s"}}
-                    onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.9)"}
-                    onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.7)"}>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B4915F" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                    Edit
-                  </button>
+          
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:16}}>
                   {/* Tappable avatar */}
