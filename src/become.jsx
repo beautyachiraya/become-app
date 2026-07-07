@@ -606,8 +606,6 @@ function saveEditSession(){
                   </div>
                   <div>
                     <p style={{fontSize:17,fontWeight:600}}>{profileForm.name}</p>
-                    <p style={{fontSize:13,color:"#9A8A78",marginTop:2}}>{profileForm.email}</p>
-                    <p style={{fontSize:13,color:"#9A8A78"}}>{profileForm.phone}</p>
                     <p style={{fontSize:11,color:"#B4915F",marginTop:4,cursor:"pointer"}} onClick={()=>profilePhotoRef.current&&profilePhotoRef.current.click()}>Tap photo to change</p>
                   </div>
                 </div>
