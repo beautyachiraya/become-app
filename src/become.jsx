@@ -52,7 +52,7 @@ const FREQUENCIES = [
   {label:"Every 2 months",days:60},{label:"Every 3 months",days:90},
   {label:"Every 6 months",days:180},{label:"Custom",days:null},
 ];
-const LANGUAGES = ["English","Thai — ภาษาไทย"];
+const LANGUAGES = ["English","Thai — ภาษาไทย"];  const T = {   en: {     until_treatment: "Until my treatment",     my_treatments: "My treatments",     add_new: "+ Add new",     add_new_treatment: "+ Add New Treatment",     empty_title: "Your becoming starts here.",     empty_sub: "Add your first treatment to begin",     add_treatment: "Add Treatment",     needs_attention: "Needs attention",     sessions_tap: "Sessions — tap to view or log",   },   th: {     until_treatment: "อีกนิดก็ถึงเวลาแล้ว",     my_treatments: "ทรีทเมนต์ของฉัน",     add_new: "+ เพิ่มรายการ",     add_new_treatment: "+ เพิ่มทรีทเมนต์ใหม่",     empty_title: "เริ่มต้นการดูแลตัวเองได้เลยนะคะ",     empty_sub: "เพิ่มทรีทเมนต์แรกของคุณได้เลย",     add_treatment: "เพิ่มทรีทเมนต์",     needs_attention: "มีรายการที่ต้องดูแล",     sessions_tap: "แตะเพื่อดูหรือบันทึกเซสชัน",   } };
 const CURRENCIES = ["THB — Thai Baht ฿","USD — US Dollar $","AED — UAE Dirham د.إ"];
 const COUNTRY_CODES = ["+66 TH","+1 US","+44 UK","+65 SG","+81 JP","+82 KR","+86 CN","+33 FR","+971 AE"];
 
