@@ -804,7 +804,7 @@ function saveEditSession(){
                 {/* Until My Treatment */}
                 {treatments.some(t=>getNext(t)&&t.sessions.length<t.totalSessions)&&(
                   <div className="pop p4" style={{marginBottom:20}}>
-                    <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase",marginBottom:14,paddingLeft:4}}>Until my treatment</p>
+                    <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase",marginBottom:14,paddingLeft:4}}>{t("until_treatment")}</p>
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
                       {treatments
                         .map(t=>({...t,nextDate:getNext(t),nextDays:daysUntil(getNext(t))}))
@@ -877,8 +877,8 @@ function saveEditSession(){
 
                 {/* Treatments */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,paddingLeft:4}}>
-                  <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase"}}>My treatments</p>
-                  <button onClick={()=>setShowAdd(true)} style={{background:"none",border:"none",fontSize:12,fontWeight:600,color:"#B4915F",cursor:"pointer",fontFamily:"inherit"}}>+ Add new</button>
+                  <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase"}}>{t("my_treatments")}</p>
+                  <button onClick={()=>setShowAdd(true)} style={{background:"none",border:"none",fontSize:12,fontWeight:600,color:"#B4915F",cursor:"pointer",fontFamily:"inherit"}}>{t("add_new")}</button>
                 </div>
 
                 {treatments.length===0&&(
