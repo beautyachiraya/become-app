@@ -927,7 +927,7 @@ function saveEditSession(){
                         </div>
                         <div style={{height:1,background:`linear-gradient(90deg,transparent,${p.accent}20,transparent)`,marginBottom:16}}/>
                         <div style={{marginBottom:16}}>
-                          <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>{t("sessions_tap")}</p>
+                          <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>Sessions — tap to view or log</p>
                           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                             {Array.from({length:t.totalSessions}).map((_,idx)=>{
                               const sess=sortedS[idx];
