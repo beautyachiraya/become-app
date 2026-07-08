@@ -1215,10 +1215,13 @@ function saveEditSession(){
                       View Full Aftercare Guide →
                     </button>
                   </div>
-                )}
-              </div>
-            </div>
           )}
+          <div style={{textAlign:"center",marginTop:24}}>
+            <button onClick={()=>{const updated={...sel,sessions:sel.sessions.filter(s=>s.id!==selSession.id)};setTreatments(treatments.map(t=>t.id!==sel.id?t:updated));const user=auth.currentUser;if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updated);}setView("detail");setDetailTab("sessions");}} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:"pointer",fontWeight:500}}>Remove this session</button>
+          </div>
+        </div>
+      </div>
+    )}
 
           {/* ADD MODAL */}
           {showAdd&&(
