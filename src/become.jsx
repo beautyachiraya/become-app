@@ -1206,7 +1206,7 @@ function saveEditSession(){
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:300,color:"#4A3C30",lineHeight:1.7,fontStyle:"italic"}}>"{selSession.note}"</p>
                   </div>
                 )}
-                {ac&&(
+                <div style={{textAlign:"center",marginTop:8,marginBottom:8}}>                   <button onClick={()=>{const updated={...sel,sessions:sel.sessions.filter(s=>s.id!==selSession.id)};setTreatments(treatments.map(t=>t.id!==sel.id?t:updated));const user=auth.currentUser;if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updated);}setView("detail");setDetailTab("sessions");}} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:"pointer",fontWeight:500}}>                     Remove this session                   </button>                 </div>                 {ac&&(
                   <div style={{background:pal.bg,borderRadius:20,padding:"18px 20px",border:`1px solid ${pal.accent}15`}}>
                     <p style={{fontSize:10,fontWeight:600,color:pal.text,letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Aftercare reminder</p>
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:300,lineHeight:1.65,fontStyle:"italic",marginBottom:14}}>"{ac.tip}"</p>
