@@ -45,7 +45,7 @@ const AFTERCARE = {
   "Other":{dos:["Follow your practitioner's specific aftercare instructions","Keep treated area clean and moisturised","Apply SPF if treatment involved the face"],donts:["Avoid touching treated area unnecessarily for 24 hours","No makeup immediately after facial treatments","No intense exercise for 24 hours"],tip:"Always ask your clinic for written aftercare specific to your treatment and skin type."},
 };
 
-const TREATMENT_TYPES = Object.keys(AFTERCARE);
+const TREATMENT_TYPES = Object.keys(AFTERCARE).sort((a, b) => a.localeCompare(b));
 const FREQUENCIES = [
   {label:"Every 2 weeks",days:14},{label:"Every 3 weeks",days:21},
   {label:"Monthly",days:30},{label:"Every 6 weeks",days:42},
