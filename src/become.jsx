@@ -322,10 +322,20 @@ if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
       return{...t,sessions:t.sessions.map(s=>s.id===target.id?{...s,photo}:s)};
     }));
   }
-  function addTreatment(){
+  async function addTreatment(){
     const n=form.name==="Other"?form.customName:form.name;
     const freq=form.frequencyLabel==="Custom"?parseInt(form.customDays):form.frequency;
-    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,sessions:[]};     const user=auth.currentUser;     if(user)setDoc(doc(db,"users",user.uid,"treatments",String(newT.id)),newT);     setTreatments([...treatments,newT]);
+    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,sessions:[]};
+    const user=auth.currentUser;
+    if(user){
+      try{
+        await setDoc(doc(db,"users",user.uid,"treatments",String(newT.id)),newT);
+      }catch(e){
+        alert("Couldn't save your treatment: "+e.message);
+        return;
+      }
+    }
+    setTreatments([...treatments,newT]);
     setShowAdd(false);
     setForm({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:""});
   }
