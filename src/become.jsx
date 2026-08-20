@@ -612,7 +612,7 @@ function saveEditSession(){
                       </svg>
                     </div>
                     <input ref={profilePhotoRef} type="file" accept="image/*" style={{display:"none"}}
-                      onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setProfilePhoto(ev.target.result);r.readAsDataURL(f);const user=auth.currentUser;if(user){const pRef=ref(storage,"users/"+user.uid+"/profile");uploadBytes(pRef,f).then(()=>getDownloadURL(pRef).then(url=>{setProfilePhoto(url);setDoc(doc(db,"users",user.uid,"profile","info"),{...profileForm,photoURL:url});}));}}}/>
+                      onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setProfilePhoto(ev.target.result);r.readAsDataURL(f);const user=auth.currentUser;if(user){const pRef=ref(storage,"users/"+user.uid+"/profile");uploadBytes(pRef,f).then(()=>getDownloadURL(pRef)).then(url=>{setProfilePhoto(url);setProfileForm(prev=>({...prev,photoURL:url}));return setDoc(doc(db,"users",user.uid,"profile","info"),{photoURL:url},{merge:true});}).catch(err=>{alert("Failed to save photo: "+err.message);});}}}/>
                   </div>
                   <div>
                     <p style={{fontSize:17,fontWeight:600}}>{profileForm.name}</p>
@@ -1465,7 +1465,7 @@ function saveEditSession(){
                   <div><span className="lbl">Phone number</span>
                     <input className="inp" type="tel" placeholder="+66 89 123 4567" value={profileForm.phone} onChange={e=>setProfileForm({...profileForm,phone:e.target.value})}/>
                   </div>
-                 <button className="btn btn-c" style={{marginTop:4}} onClick={async()=>{const user=auth.currentUser;if(user){try{await setDoc(doc(db,"users",user.uid,"profile","info"),profileForm,{merge:true});}catch(e){alert("Failed to save profile: "+e.message);return;}}setShowEditProfile(false);}} disabled={!profileForm.name||!profileForm.email}>
+                 <button className="btn btn-c" style={{marginTop:4}} onClick={async()=>{const user=auth.currentUser;if(user){try{await setDoc(doc(db,"users",user.uid,"profile","info"),{name:profileForm.name,email:profileForm.email,phone:profileForm.phone},{merge:true});}catch(e){alert("Failed to save profile: "+e.message);return;}}setShowEditProfile(false);}} disabled={!profileForm.name||!profileForm.email}>
                     Save Changes
                   </button>
                   <button onClick={()=>setShowEditProfile(false)}
