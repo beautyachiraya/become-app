@@ -227,14 +227,8 @@ function PolicyModal({title, sections, onClose, onAccept, acceptLabel}){
 export default function Become(){
   const [authScreen,setAuthScreen]=useState("login");
   const [oauthProvider,setOauthProvider]=useState(null);
-  const [otpMethod,setOtpMethod]=useState("email");
-  const [otpContact,setOtpContact]=useState("");
-  const [otp,setOtp]=useState(["","","","",""]);
-  const [otpError,setOtpError]=useState("");
   const [signupForm,setSignupForm]=useState({name:"",email:"",phone:"",countryCode:"+66 TH",password:""});
   const [loginForm,setLoginForm]=useState({email:"",password:""});
-  const oR0=useRef(),oR1=useRef(),oR2=useRef(),oR3=useRef(),oR4=useRef();
-  const otpRefs=[oR0,oR1,oR2,oR3,oR4];
 
   const [treatments,setTreatments]=useState([]);
   const [appTab,setAppTab]=useState("home");
@@ -248,6 +242,8 @@ export default function Become(){
   const [editForm,setEditForm]=useState(null);
   const [showEditSession,setShowEditSession]=useState(false);
   const [editSessionForm,setEditSessionForm]=useState(null);
+  const [showBuyAgain,setShowBuyAgain]=useState(false);
+  const [buyAgainForm,setBuyAgainForm]=useState({sessions:"",expiryDate:""});
   const [logTargetIdx,setLogTargetIdx]=useState(null);
   const fileRef=useRef(null);
   const editPhotoRef=useRef(null);
@@ -278,14 +274,6 @@ export default function Become(){
   }),[treatments]);
 
 
-  function handleOtpInput(val,i){
-    if(!/^\d*$/.test(val))return;
-    const next=[...otp];next[i]=val.slice(-1);setOtp(next);
-    if(val&&i<4)otpRefs[i+1].current&&otpRefs[i+1].current.focus();
-  }
-  function handleOtpKey(e,i){if(e.key==="Backspace"&&!otp[i]&&i>0)otpRefs[i-1].current&&otpRefs[i-1].current.focus();}
-  function verifyOtp(){if(otp.join("")==="12345"){setAuthScreen("app");setOtpError("");}else setOtpError("Incorrect code. Please try again.");}
-  function sendOtp(method,contact){setOtpMethod(method);setOtpContact(contact);setOtp(["","","","",""]);setOtpError("");setAuthScreen("otp");}
   function openDot(tId,idx,session){
     setSelectedId(tId);
     if(session){setSessionIdx(idx);setView("session");}
@@ -294,23 +282,23 @@ export default function Become(){
 async function logSession(){
     const user=auth.currentUser;
     let photoURL=null;
-if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
-      const blob=await fetch(logForm.photo).then(r=>r.blob());
-      const photoRef=ref(storage,`users/${user.uid}/photos/${Date.now()}`);
-      await uploadBytes(photoRef,blob);
-      photoURL=await getDownloadURL(photoRef);
-    }
-    const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:photoURL};
-    const updatedTreatments=treatments.map(t=>{
-      if(String(t.id)===String(selectedId)){
-        const updatedT={...t,sessions:[...t.sessions,newSession]};
-        const user=auth.currentUser;
-        if(user){setDoc(doc(db,"users",user.uid,"treatments",String(t.id)),updatedT);}
-        return updatedT;
+    try{
+      if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
+        const blob=await fetch(logForm.photo).then(r=>r.blob());
+        const photoRef=ref(storage,`users/${user.uid}/photos/${Date.now()}`);
+        await uploadBytes(photoRef,blob);
+        photoURL=await getDownloadURL(photoRef);
       }
-      return t;
-    });
-    setTreatments(updatedTreatments);
+      const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:photoURL};
+      const target=treatments.find(t=>String(t.id)===String(selectedId));
+      if(!target)return;
+      const updatedT={...target,sessions:[...target.sessions,newSession]};
+      if(user){await setDoc(doc(db,"users",user.uid,"treatments",String(target.id)),updatedT);}
+      setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
+    }catch(e){
+      alert("Failed to log session: "+e.message);
+      return;
+    }
     setShowLog(false);
     setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});
   }
@@ -325,7 +313,8 @@ if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
   async function addTreatment(){
     const n=form.name==="Other"?form.customName:form.name;
     const freq=form.frequencyLabel==="Custom"?parseInt(form.customDays):form.frequency;
-    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,sessions:[]};
+    const totalSessions=parseInt(form.totalSessions);
+    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions,frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,sessions:[],purchases:[{date:new Date().toISOString().split("T")[0],sessionsAdded:totalSessions,expiryDate:form.expiryDate}]};
     const user=auth.currentUser;
     if(user){
       try{
@@ -339,30 +328,76 @@ if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
     setShowAdd(false);
     setForm({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:""});
   }
-  function deleteTreatment(id){   setTreatments(treatments.filter(t=>t.id!==id));   const user=auth.currentUser;   if(user){deleteDoc(doc(db,"users",user.uid,"treatments",String(id)));}   setView("home"); }
+  async function deleteTreatment(id){
+    const user=auth.currentUser;
+    if(user){
+      try{
+        await deleteDoc(doc(db,"users",user.uid,"treatments",String(id)));
+      }catch(e){
+        alert("Failed to delete treatment: "+e.message);
+        return;
+      }
+    }
+    setTreatments(treatments.filter(t=>t.id!==id));
+    setView("home");
+  }
   function goToDetail(id){setSelectedId(id);setDetailTab("sessions");setView("detail");}
   function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||""});setShowEdit(true);}
-function saveEdit(){
+async function saveEdit(){
     if(!editForm||!sel)return;
     const freq=editForm.frequencyLabel==="Custom"?parseInt(editForm.customDays):editForm.frequency;
     const updatedT={...sel,name:editForm.name,clinic:editForm.clinic,brandUnit:editForm.brandUnit,totalSessions:parseInt(editForm.totalSessions),frequency:freq,frequencyLabel:editForm.frequencyLabel,expiryDate:editForm.expiryDate,notes:editForm.notes};
     const user=auth.currentUser;
-    if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updatedT);}
+    if(user){
+      try{
+        await setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updatedT);
+      }catch(e){
+        alert("Failed to save changes: "+e.message);
+        return;
+      }
+    }
     setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
     setShowEdit(false);
   }
   function openEditSession(session){setEditSessionForm({date:session.date,note:session.note||""});setShowEditSession(true);}
-function saveEditSession(){
+async function saveEditSession(){
     if(!editSessionForm||!selectedId||sessionIdx===null)return;
     const currentTreatment=treatments.find(t=>String(t.id)===String(selectedId));
     if(!currentTreatment)return;
     const sorted=[...currentTreatment.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
     const target=sorted[sessionIdx];
     const updatedT={...currentTreatment,sessions:currentTreatment.sessions.map(s=>s.id===target.id?{...s,date:editSessionForm.date,note:editSessionForm.note}:s)};
-    setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
     const user=auth.currentUser;
-    if(user){setDoc(doc(db,"users",user.uid,"treatments",String(selectedId)),updatedT);}
+    if(user){
+      try{
+        await setDoc(doc(db,"users",user.uid,"treatments",String(selectedId)),updatedT);
+      }catch(e){
+        alert("Failed to save session: "+e.message);
+        return;
+      }
+    }
+    setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
     setShowEditSession(false);
+  }
+  async function buyAgain(){
+    if(!sel||!buyAgainForm.sessions)return;
+    const add=parseInt(buyAgainForm.sessions);
+    if(!add||add<1)return;
+    const newExpiry=buyAgainForm.expiryDate||sel.expiryDate;
+    const purchaseEntry={date:new Date().toISOString().split("T")[0],sessionsAdded:add,expiryDate:newExpiry};
+    const updatedT={...sel,totalSessions:sel.totalSessions+add,expiryDate:newExpiry,purchases:[...(sel.purchases||[]),purchaseEntry]};
+    const user=auth.currentUser;
+    if(user){
+      try{
+        await setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updatedT);
+      }catch(e){
+        alert("Failed to save purchase: "+e.message);
+        return;
+      }
+    }
+    setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
+    setShowBuyAgain(false);
+    setBuyAgainForm({sessions:"",expiryDate:""});
   }
   const S=`
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
@@ -407,9 +442,6 @@ function saveEditSession(){
     .t.on{background:#FFF;color:#1C1612;box-shadow:0 2px 8px rgba(28,22,18,0.08);}
     .soc{width:100%;padding:14px;border:1.5px solid #EDE5D8;border-radius:14px;background:#FFF;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;color:#1C1612;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:all 0.15s;}
     .soc:hover{border-color:rgba(180,145,95,0.3);transform:translateY(-1px);}
-    .otp{width:52px;height:60px;border:1.5px solid #EDE5D8;border-radius:14px;background:#FFF;font-family:'DM Sans',sans-serif;font-size:24px;font-weight:600;color:#1C1612;text-align:center;outline:none;transition:border 0.2s;}
-    .otp:focus{border-color:#B4915F;box-shadow:0 0 0 3px rgba(180,145,95,0.1);}
-    .otp.done{border-color:#B4915F;background:rgba(180,145,95,0.06);}
     .srow{display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid rgba(180,145,95,0.08);cursor:pointer;transition:opacity 0.15s;}
     .srow:hover{opacity:0.72;}
     .srow:last-child{border-bottom:none;}
@@ -1014,11 +1046,16 @@ function saveEditSession(){
                     </div>
                   ))}
                 </div>
+                <button className="btn" style={{background:"#FFF",color:pal.accent,border:`1.5px solid ${pal.accent}30`,marginTop:14,fontWeight:600}}
+                  onClick={()=>{setBuyAgainForm({sessions:"",expiryDate:sel.expiryDate||""});setShowBuyAgain(true);}}>
+                  + Buy Again
+                </button>
               </div>
 
               <div style={{padding:"20px"}}>
                 <div className="tabs" style={{marginBottom:20}}>
                   <button className={`t ${detailTab==="sessions"?"on":""}`} onClick={()=>setDetailTab("sessions")}>Session Timeline</button>
+                  <button className={`t ${detailTab==="purchases"?"on":""}`} onClick={()=>setDetailTab("purchases")}>Purchase History</button>
                   <button className={`t ${detailTab==="aftercare"?"on":""}`} onClick={()=>setDetailTab("aftercare")}>Aftercare Guide</button>
                 </div>
 
@@ -1105,6 +1142,22 @@ function saveEditSession(){
                         + Log Session {sel.sessions.length+1}
                       </button>
                     )}
+                  </div>
+                )}
+
+                {detailTab==="purchases"&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {sel.purchases&&sel.purchases.length>0
+                      ?[...sel.purchases].sort((a,b)=>new Date(b.date)-new Date(a.date)).map((p,i)=>(
+                        <div key={i} className="card" style={{padding:"16px 18px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <div>
+                            <p style={{fontSize:14,fontWeight:600}}>+{p.sessionsAdded} session{p.sessionsAdded>1?"s":""}</p>
+                            <p style={{fontSize:12,color:"#9A8A78",marginTop:2}}>{fmtDate(p.date)}{p.expiryDate?` · Exp ${fmtShort(p.expiryDate)}`:""}</p>
+                          </div>
+                        </div>
+                      ))
+                      : <p style={{fontSize:13,color:"#9A8A78",textAlign:"center",padding:"24px 0"}}>No purchase history recorded yet.</p>
+                    }
                   </div>
                 )}
 
@@ -1216,7 +1269,7 @@ function saveEditSession(){
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:300,color:"#4A3C30",lineHeight:1.7,fontStyle:"italic"}}>"{selSession.note}"</p>
                   </div>
                 )}
-                <div style={{textAlign:"center",marginTop:8,marginBottom:8}}>                   <button onClick={()=>{const updated={...sel,sessions:sel.sessions.filter(s=>s.id!==selSession.id)};setTreatments(treatments.map(t=>t.id!==sel.id?t:updated));const user=auth.currentUser;if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updated).then(()=>{setView("detail");setDetailTab("sessions");});}else{setView("detail");setDetailTab("sessions");}}} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:"pointer",fontWeight:500}}>                     Remove this session                   </button>                 </div>                 {ac&&(
+                {ac&&(
                   <div style={{background:pal.bg,borderRadius:20,padding:"18px 20px",border:`1px solid ${pal.accent}15`}}>
                     <p style={{fontSize:10,fontWeight:600,color:pal.text,letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Aftercare reminder</p>
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:300,lineHeight:1.65,fontStyle:"italic",marginBottom:14}}>"{ac.tip}"</p>
@@ -1227,7 +1280,7 @@ function saveEditSession(){
                   </div>
           )}
           <div style={{textAlign:"center",marginTop:24}}>
-            <button onClick={()=>{const updated={...sel,sessions:sel.sessions.filter(s=>s.id!==selSession.id)};setTreatments(treatments.map(t=>t.id!==sel.id?t:updated));const user=auth.currentUser;if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updated);}setView("detail");setDetailTab("sessions");}} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:"pointer",fontWeight:500}}>Remove this session</button>
+            <button onClick={async()=>{const updated={...sel,sessions:sel.sessions.filter(s=>s.id!==selSession.id)};const user=auth.currentUser;if(user){try{await setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updated);}catch(e){alert("Failed to remove session: "+e.message);return;}}setTreatments(treatments.map(t=>t.id!==sel.id?t:updated));setView("detail");setDetailTab("sessions");}} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:"pointer",fontWeight:500}}>Remove this session</button>
           </div>
         </div>
       </div>
@@ -1295,6 +1348,21 @@ function saveEditSession(){
                   </div>
                   <div><span className="lbl">How did it go?</span><textarea className="inp" rows={3} placeholder="Results, any reactions, how you feel..." value={logForm.note} onChange={e=>setLogForm({...logForm,note:e.target.value})}/></div>
                   <button className="btn" style={{background:pal.accent,color:"#FFF",boxShadow:`0 8px 24px ${pal.accent}28`,marginTop:4,fontWeight:600}} onClick={logSession}>Save Session</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showBuyAgain&&sel&&(
+            <div className="mbg" onClick={e=>{if(e.target===e.currentTarget)setShowBuyAgain(false);}}>
+              <div className="msheet">
+                <div className="mhandle"/>
+                <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,marginBottom:4}}>Buy Again</h2>
+                <p style={{fontSize:13,color:"#9A8A78",marginBottom:24}}>{sel.name} · {sel.clinic}</p>
+                <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                  <div><span className="lbl">How many sessions did you buy?</span><input className="inp" type="number" min="1" placeholder="e.g. 8" value={buyAgainForm.sessions} onChange={e=>setBuyAgainForm({...buyAgainForm,sessions:e.target.value})}/></div>
+                  <div><span className="lbl">New expiry date (optional)</span><input className="inp" type="date" value={buyAgainForm.expiryDate} onChange={e=>setBuyAgainForm({...buyAgainForm,expiryDate:e.target.value})}/></div>
+                  <button className="btn" style={{background:pal.accent,color:"#FFF",boxShadow:`0 8px 24px ${pal.accent}28`,marginTop:4,fontWeight:600}} onClick={buyAgain} disabled={!buyAgainForm.sessions}>Save Purchase</button>
                 </div>
               </div>
             </div>
