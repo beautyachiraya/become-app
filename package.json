@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "DISABLE_ESLINT_PLUGIN=true CI=false react-scripts build"
+    "build": "DISABLE_ESLINT_PLUGIN=true CI=false react-scripts build",
+    "test": "DISABLE_ESLINT_PLUGIN=true CI=true react-scripts test --watchAll=false"
   },
   "browserslist": {
     "production": [">0.2%", "not dead"],
