@@ -2,9 +2,10 @@
  * History vs active filtering for Become treatments.
  *
  * Today treatments live at users/{uid}/treatments with nested sessions
- * (totalSessions + sessions[]). A later ledger may use packages with
- * sessionsTotal / sessionsRemaining / status. These helpers read both
- * shapes so History can ship without rewriting the data model.
+ * (totalSessions + sessions[] + expiryDate). A later ledger may use
+ * packages with sessionsTotal / sessionsRemaining / source / expiresAt /
+ * status. These helpers read both shapes so History can ship without
+ * rewriting the data model.
  */
 
 const FINISHED_STATUSES = new Set([
@@ -35,6 +36,39 @@ export function getRemainingSessions(treatment) {
   return Math.max(0, getTotalSessions(treatment) - getSessions(treatment).length);
 }
 
+export function getExpiryDate(treatment) {
+  if (!treatment) return null;
+  return treatment.expiresAt || treatment.expiryDate || null;
+}
+
+export function getPackageSource(treatment) {
+  if (!treatment) return null;
+  const raw = treatment.source != null ? treatment.source : (treatment.kind || treatment.packType);
+  if (raw == null || raw === "") return null;
+  const value = String(raw).toLowerCase();
+  if (value === "promo" || value === "promotional" || value === "promotion") return "promo";
+  if (value === "paid") return "paid";
+  return null;
+}
+
+function startOfDay(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+export function isExpiredPackage(treatment, now = new Date()) {
+  if (!treatment) return false;
+  if (treatment.status && String(treatment.status).toLowerCase() === "expired") return true;
+  const raw = getExpiryDate(treatment);
+  if (!raw) return false;
+  const expiry = startOfDay(raw);
+  const today = startOfDay(now);
+  if (!expiry || !today) return false;
+  return expiry < today;
+}
+
 export function isUsedUpPackage(treatment) {
   if (!treatment) return false;
   if (treatment.status && FINISHED_STATUSES.has(String(treatment.status).toLowerCase())) {
@@ -45,14 +79,18 @@ export function isUsedUpPackage(treatment) {
   return getRemainingSessions(treatment) <= 0;
 }
 
-export function isActivePackage(treatment) {
-  return !isUsedUpPackage(treatment);
+export function isHistoryPackage(treatment, now = new Date()) {
+  return isUsedUpPackage(treatment) || isExpiredPackage(treatment, now);
+}
+
+export function isActivePackage(treatment, now = new Date()) {
+  return !isHistoryPackage(treatment, now);
 }
 
 export function lastSessionDate(treatment) {
   const sessions = getSessions(treatment);
   if (!sessions.length) {
-    return (treatment && (treatment.expiresAt || treatment.expiryDate)) || null;
+    return getExpiryDate(treatment);
   }
   return sessions.reduce((latest, session) => {
     if (!session || !session.date) return latest;
@@ -61,12 +99,12 @@ export function lastSessionDate(treatment) {
   }, null);
 }
 
-export function partitionTreatments(treatments) {
+export function partitionTreatments(treatments, now = new Date()) {
   const list = Array.isArray(treatments) ? treatments : [];
   const active = [];
   const finished = [];
   list.forEach((treatment) => {
-    if (isUsedUpPackage(treatment)) finished.push(treatment);
+    if (isHistoryPackage(treatment, now)) finished.push(treatment);
     else active.push(treatment);
   });
   finished.sort((a, b) => new Date(lastSessionDate(b) || 0) - new Date(lastSessionDate(a) || 0));
@@ -94,7 +132,7 @@ export function completedSessions(treatments) {
   return items;
 }
 
-export function hasHistoryItems(treatments) {
-  const { finished } = partitionTreatments(treatments);
+export function hasHistoryItems(treatments, now = new Date()) {
+  const { finished } = partitionTreatments(treatments, now);
   return finished.length > 0 || completedSessions(treatments).length > 0;
 }

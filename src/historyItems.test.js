@@ -2,8 +2,12 @@ import {
   getSessions,
   getTotalSessions,
   getRemainingSessions,
+  getExpiryDate,
+  getPackageSource,
+  isExpiredPackage,
   isUsedUpPackage,
   isActivePackage,
+  isHistoryPackage,
   lastSessionDate,
   partitionTreatments,
   completedSessions,
@@ -60,6 +64,7 @@ describe("current treatment schema", () => {
   it("does not send an unused new package to History", () => {
     expect(getRemainingSessions(emptyHydra)).toBe(6);
     expect(isUsedUpPackage(emptyHydra)).toBe(false);
+    expect(isHistoryPackage(emptyHydra, new Date("2026-09-16"))).toBe(false);
   });
 
   it("keeps packages with missing totals on the active list", () => {
@@ -94,15 +99,50 @@ describe("future package-ledger fields", () => {
     };
     expect(isUsedUpPackage(pack)).toBe(true);
   });
+
+  it("reads source promo|paid when present and ignores other values", () => {
+    expect(getPackageSource({ source: "promo" })).toBe("promo");
+    expect(getPackageSource({ source: "Paid" })).toBe("paid");
+    expect(getPackageSource({ kind: "promotional" })).toBe("promo");
+    expect(getPackageSource({ name: "Laser" })).toBe(null);
+    expect(getPackageSource({ source: "clinic" })).toBe(null);
+  });
+
+  it("reads expiresAt as well as expiryDate", () => {
+    expect(getExpiryDate({ expiresAt: "2026-01-01" })).toBe("2026-01-01");
+    expect(getExpiryDate({ expiryDate: "2026-12-31" })).toBe("2026-12-31");
+  });
 });
 
 describe("partition and History lists", () => {
+  const today = new Date("2026-09-16T12:00:00");
   const all = [laser, usedUpBotox, emptyHydra];
 
   it("keeps in-progress packages on the active list and used-up ones in History", () => {
-    const { active, finished } = partitionTreatments(all);
+    const { active, finished } = partitionTreatments(all, today);
     expect(active.map((t) => t.id)).toEqual([1, 3]);
     expect(finished.map((t) => t.id)).toEqual([2]);
+  });
+
+  it("moves expired packages to History even when sessions remain", () => {
+    const expiredWithRemaining = {
+      ...laser,
+      id: 44,
+      expiryDate: "2026-01-01",
+    };
+    expect(isExpiredPackage(expiredWithRemaining, today)).toBe(true);
+    expect(isUsedUpPackage(expiredWithRemaining)).toBe(false);
+    expect(isActivePackage(expiredWithRemaining, today)).toBe(false);
+    expect(isHistoryPackage(expiredWithRemaining, today)).toBe(true);
+    const { active, finished } = partitionTreatments([laser, expiredWithRemaining], today);
+    expect(active.map((t) => t.id)).toEqual([1]);
+    expect(finished.map((t) => t.id)).toEqual([44]);
+  });
+
+  it("treats an explicit expired status as History", () => {
+    const pack = { id: 7, name: "PRP", status: "expired", totalSessions: 4, sessions: [] };
+    expect(isExpiredPackage(pack, today)).toBe(true);
+    expect(isHistoryPackage(pack, today)).toBe(true);
   });
 
   it("sorts finished packages by most recent session first", () => {

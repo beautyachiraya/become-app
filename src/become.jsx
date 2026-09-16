@@ -3,7 +3,7 @@ import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDo
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import { createDataClient, formatWriteError } from "./userData";
-import { getSessions, getTotalSessions, getRemainingSessions, lastSessionDate, partitionTreatments, completedSessions, hasHistoryItems } from "./historyItems";
+import { getSessions, getTotalSessions, getRemainingSessions, getExpiryDate, getPackageSource, isExpiredPackage, isUsedUpPackage, lastSessionDate, partitionTreatments, completedSessions, hasHistoryItems } from "./historyItems";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
 
@@ -72,15 +72,19 @@ const T = {
     sessions_tap: "Sessions — tap to view or log",
     history: "History",
     history_kicker: "Look back",
-    history_sub: "Completed sessions and packages you have used up.",
+    history_sub: "Used-up packages, expired packages, and completed sessions.",
     history_empty_title: "Your story is still unfolding.",
-    history_empty_sub: "Completed sessions and finished packages will live here.",
+    history_empty_sub: "Completed sessions and packages that are used up or expired will live here.",
     home_empty_active_title: "Nothing in progress right now.",
-    home_empty_active_sub: "Finished packages are waiting in History.",
+    home_empty_active_sub: "Used-up and expired packages are waiting in History.",
     view_history: "View History",
-    finished_packages: "Finished packages",
+    finished_packages: "Used up & expired",
     completed_sessions: "Completed sessions",
     last_session: "Last session",
+    promo: "Promo",
+    paid: "Paid",
+    expired: "Expired",
+    remaining_left: "left",
   },
   th: {
     until_treatment: "อีกนิดก็ถึงเวลาแล้ว",
@@ -95,27 +99,33 @@ const T = {
     sessions_tap: "แตะเพื่อดูหรือบันทึกเซสชัน",
     history: "History",
     history_kicker: "ย้อนดู",
-    history_sub: "เซสชันที่เสร็จแล้วและแพ็กเกจที่ใช้ครบแล้ว",
+    history_sub: "แพ็กเกจที่ใช้ครบ หมดอายุ และเซสชันที่เสร็จแล้ว",
     history_empty_title: "เรื่องราวยังเพิ่งเริ่มต้นนะคะ",
-    history_empty_sub: "เซสชันที่บันทึกแล้วและแพ็กเกจที่ใช้ครบจะอยู่ที่นี่",
+    history_empty_sub: "เซสชันที่บันทึกแล้ว และแพ็กเกจที่ใช้ครบหรือหมดอายุจะอยู่ที่นี่",
     home_empty_active_title: "ยังไม่มีแพ็กเกจที่กำลังใช้อยู่",
-    home_empty_active_sub: "รายการที่เสร็จแล้วอยู่ที่หน้า History",
+    home_empty_active_sub: "แพ็กเกจที่ใช้ครบหรือหมดอายุอยู่ที่หน้า History",
     view_history: "ดู History",
-    finished_packages: "แพ็กเกจที่ใช้ครบแล้ว",
+    finished_packages: "ใช้ครบและหมดอายุ",
     completed_sessions: "เซสชันที่เสร็จแล้ว",
     last_session: "เซสชันล่าสุด",
+    promo: "โปรโม",
+    paid: "ซื้อแล้ว",
+    expired: "หมดอายุ",
+    remaining_left: "เหลือ",
   },
 };
 const CURRENCIES = ["THB — Thai Baht ฿","USD — US Dollar $","AED — UAE Dirham د.إ"];
 const COUNTRY_CODES = ["+66 TH","+1 US","+44 UK","+65 SG","+81 JP","+82 KR","+86 CN","+33 FR","+971 AE"];
 
 const SAMPLE_DATA = [
-  {id:1,name:"Laser Hair Removal",clinic:"Glow Clinic Bangkok",totalSessions:8,frequency:42,frequencyLabel:"Every 6 weeks",expiryDate:"2026-12-31",palette:0,notes:"Full legs",
+  {id:1,name:"Laser Hair Removal",clinic:"Glow Clinic Bangkok",totalSessions:8,frequency:42,frequencyLabel:"Every 6 weeks",expiryDate:"2026-12-31",source:"paid",palette:0,notes:"Full legs",
     sessions:[{id:1,date:"2026-01-15",note:"First session, mild redness after",photo:null},{id:2,date:"2026-02-26",note:"Noticeably less hair growth!",photo:null},{id:3,date:"2026-03-08",note:"Smoother skin already",photo:null}]},
-  {id:2,name:"Botox",clinic:"Aesthetic Studio",totalSessions:3,frequency:90,frequencyLabel:"Every 3 months",expiryDate:"2025-09-30",palette:1,notes:"Forehead & crow's feet",
+  {id:2,name:"Botox",clinic:"Aesthetic Studio",totalSessions:3,frequency:90,frequencyLabel:"Every 3 months",expiryDate:"2025-09-30",source:"paid",palette:1,notes:"Forehead & crow's feet",
     sessions:[{id:1,date:"2025-12-01",note:"20 units, love the result",photo:null}]},
-  {id:3,name:"Hydrafacial",clinic:"Pure Skin Spa",totalSessions:6,frequency:30,frequencyLabel:"Monthly",expiryDate:"2026-11-01",palette:2,notes:"Diamond glow add-on",
+  {id:3,name:"Hydrafacial",clinic:"Pure Skin Spa",totalSessions:6,frequency:30,frequencyLabel:"Monthly",expiryDate:"2026-11-01",source:"promo",palette:2,notes:"Diamond glow add-on",
     sessions:[{id:1,date:"2026-01-10",note:"Skin feels incredible",photo:null},{id:2,date:"2026-02-10",note:"Added vitamin C booster",photo:null},{id:3,date:"2026-03-10",note:"Best skin of my life!",photo:null}]},
+  {id:4,name:"Chemical Peel",clinic:"Glow Clinic Bangkok",totalSessions:5,frequency:30,frequencyLabel:"Monthly",expiryDate:"2026-01-15",source:"promo",palette:3,notes:"Left unused after expiry",
+    sessions:[{id:1,date:"2025-11-20",note:"First peel",photo:null}]},
 ];
 
 // ─── HELPERS ─────────────────────────────────────────────────────
@@ -357,12 +367,13 @@ export default function Become(){
         SAMPLE_DATA[0],
         {...SAMPLE_DATA[1],totalSessions:1},
         SAMPLE_DATA[2],
+        SAMPLE_DATA[3],
       ]);
       return;
     }
     if(mode==="history-empty"){
       setAuthScreen("app");
-      setTreatments([{...SAMPLE_DATA[2],sessions:[]}]);
+      setTreatments([{...SAMPLE_DATA[2],sessions:[],expiryDate:"2026-12-31"}]);
       return;
     }
     if(mode==="active-empty"){
@@ -389,7 +400,7 @@ export default function Become(){
     return()=>{cancelled=true;};
   },[authScreen]);
   const urgent=useMemo(()=>activeTreatments.filter(t=>{
-    const e=daysUntil(t.expiryDate);
+    const e=daysUntil(getExpiryDate(t));
     return e!==null&&e<=30&&e>=0;
   }),[activeTreatments]);
 
@@ -1164,7 +1175,7 @@ async function saveEditSession(){
                     <div style={{background:"#FEF5E4",borderRadius:20,padding:"18px 20px",border:"1px solid rgba(200,144,64,0.2)"}}>
                       <p style={{fontSize:10,fontWeight:600,color:"#C89040",letterSpacing:2,textTransform:"uppercase",marginBottom:12}}>Needs attention</p>
                       {urgent.map((pkg,i)=>{
-                        const e=daysUntil(pkg.expiryDate);
+                        const e=daysUntil(getExpiryDate(pkg));
                         return(
                           <div key={pkg.id} onClick={()=>goToDetail(pkg.id)}
                             style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderTop:i>0?"1px solid rgba(200,144,64,0.12)":"none",cursor:"pointer"}}>
@@ -1289,8 +1300,9 @@ async function saveEditSession(){
                     const used=getSessions(pkg).length;
                     const rem=getRemainingSessions(pkg);
                     const total=getTotalSessions(pkg);
-                    const expDays=daysUntil(pkg.expiryDate);
-                    const isExpired=expDays!==null&&expDays<0;
+                    const source=getPackageSource(pkg);
+                    const expDays=daysUntil(getExpiryDate(pkg));
+                    const isExpired=isExpiredPackage(pkg);
                     const next=getNext(pkg);
                     const sortedS=[...getSessions(pkg)].sort((a,b)=>new Date(a.date)-new Date(b.date));
                     return(
@@ -1303,16 +1315,21 @@ async function saveEditSession(){
                             <div style={{flex:1}}>
                               <p style={{fontSize:15,fontWeight:600,marginBottom:2}}>{pkg.name}</p>
                               <p style={{fontSize:12,color:"#9A8A78"}}>{pkg.clinic}</p>
+                              {source&&(
+                                <div style={{marginTop:6}}>
+                                  <span className={`pill ${source==="promo"?"pill-c":"pill-done"}`}>{t(source)}</span>
+                                </div>
+                              )}
                               {pkg.brandUnit&&<p style={{fontSize:11,color:"#B4915F",fontWeight:500,marginTop:2}}>{pkg.brandUnit}</p>}{pkg.notes&&<p style={{fontSize:11,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{pkg.notes}</p>}
                             </div>
                           </div>
                           <div style={{textAlign:"right",marginLeft:12,display:"flex",flexDirection:"column",alignItems:"flex-end"}}>
                             <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:40,fontWeight:400,color:p.accent,lineHeight:1}}>{rem}</p>
-                            <p style={{fontSize:9,color:"#C4B8A8",fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>left</p>
+                            <p style={{fontSize:9,color:"#C4B8A8",fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>{t("remaining_left")}</p>
                             {isExpired
-                              ? <span style={{fontSize:11,fontWeight:700,color:"#C05858",background:"#FAEAEA",padding:"3px 10px",borderRadius:20}}>Expired</span>
-                              : pkg.expiryDate
-                                ? <span style={{fontSize:11,color:"#9A8A78"}}>Exp {fmtShort(pkg.expiryDate)}</span>
+                              ? <span style={{fontSize:11,fontWeight:700,color:"#C05858",background:"#FAEAEA",padding:"3px 10px",borderRadius:20}}>{t("expired")}</span>
+                              : getExpiryDate(pkg)
+                                ? <span style={{fontSize:11,color:"#9A8A78"}}>Exp {fmtShort(getExpiryDate(pkg))}</span>
                                 : null
                             }
                           </div>
@@ -1433,9 +1450,9 @@ async function saveEditSession(){
                       </div>
                       <div className="card" style={{padding:"16px"}}>
                         <span className="lbl">Expires</span>
-                        <p style={{fontSize:14,fontWeight:600}}>{fmtDate(sel.expiryDate)}</p>
-                        {sel.expiryDate&&(()=>{
-                          const d=daysUntil(sel.expiryDate);
+                        <p style={{fontSize:14,fontWeight:600}}>{fmtDate(getExpiryDate(sel))}</p>
+                        {getExpiryDate(sel)&&(()=>{
+                          const d=daysUntil(getExpiryDate(sel));
                           if(d<0)return <span className="pill pill-danger" style={{marginTop:6,display:"inline-flex"}}>Expired</span>;
                           if(d<=30)return <span className="pill pill-warn" style={{marginTop:6,display:"inline-flex"}}>{d}d left</span>;
                           return <span className="pill pill-c" style={{marginTop:6,display:"inline-flex"}}>{d} days</span>;
@@ -1912,7 +1929,10 @@ async function saveEditSession(){
                         const p=PALETTE[(pkg.palette||0)%PALETTE.length];
                         const used=getSessions(pkg).length;
                         const total=getTotalSessions(pkg);
+                        const rem=getRemainingSessions(pkg);
                         const last=lastSessionDate(pkg);
+                        const expired=isExpiredPackage(pkg);
+                        const usedUp=isUsedUpPackage(pkg);
                         return(
                           <div key={pkg.id} className="tcard" style={{padding:"18px 18px"}} onClick={()=>goToDetail(pkg.id)}>
                             <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
@@ -1924,9 +1944,13 @@ async function saveEditSession(){
                                 <p style={{fontSize:12,color:"#9A8A78"}}>{pkg.clinic}</p>
                                 {last&&<p style={{fontSize:11,color:"#B4915F",marginTop:4}}>{t("last_session")} · {fmtDate(last)}</p>}
                               </div>
-                              <div style={{textAlign:"right",flexShrink:0}}>
-                                <span className="pill pill-done">Complete</span>
-                                <p style={{fontSize:11,color:"#9A8A78",marginTop:8}}>{used}/{total}</p>
+                              <div style={{textAlign:"right",flexShrink:0,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+                                {expired
+                                  ? <span className="pill pill-danger">{t("expired")}</span>
+                                  : usedUp
+                                    ? <span className="pill pill-done">Complete</span>
+                                    : null}
+                                <p style={{fontSize:11,color:"#9A8A78"}}>{used}/{total}{expired&&rem>0?` · ${rem} ${t("remaining_left")}`:""}</p>
                               </div>
                             </div>
                           </div>
