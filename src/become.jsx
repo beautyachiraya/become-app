@@ -365,7 +365,7 @@ export default function Become(){
       setAuthScreen("app");
       setTreatments([
         SAMPLE_DATA[0],
-        {...SAMPLE_DATA[1],totalSessions:1},
+        {...SAMPLE_DATA[1],totalSessions:1,expiryDate:"2026-12-31"},
         SAMPLE_DATA[2],
         SAMPLE_DATA[3],
       ]);
@@ -378,7 +378,7 @@ export default function Become(){
     }
     if(mode==="active-empty"){
       setAuthScreen("app");
-      setTreatments([{...SAMPLE_DATA[1],totalSessions:1}]);
+      setTreatments([{...SAMPLE_DATA[1],totalSessions:1,expiryDate:"2026-12-31"}]);
     }
   },[]);
   useEffect(()=>{
@@ -1945,11 +1945,8 @@ async function saveEditSession(){
                                 {last&&<p style={{fontSize:11,color:"#B4915F",marginTop:4}}>{t("last_session")} · {fmtDate(last)}</p>}
                               </div>
                               <div style={{textAlign:"right",flexShrink:0,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
-                                {expired
-                                  ? <span className="pill pill-danger">{t("expired")}</span>
-                                  : usedUp
-                                    ? <span className="pill pill-done">Complete</span>
-                                    : null}
+                                {usedUp&&<span className="pill pill-done">Complete</span>}
+                                {expired&&<span className="pill pill-danger">{t("expired")}</span>}
                                 <p style={{fontSize:11,color:"#9A8A78"}}>{used}/{total}{expired&&rem>0?` · ${rem} ${t("remaining_left")}`:""}</p>
                               </div>
                             </div>
