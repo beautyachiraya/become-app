@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
-import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
+import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import { createDataClient, formatWriteError } from "./userData";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
@@ -55,7 +56,7 @@ const FREQUENCIES = [
   {label:"Every 2 months",days:60},{label:"Every 3 months",days:90},
   {label:"Every 6 months",days:180},{label:"Custom",days:null},
 ];
-const LANGUAGES = ["English","Thai — ภาษาไทย"];  const T = {   en: {     until_treatment: "Until my treatment",     my_treatments: "My treatments",     add_new: "+ Add new",     add_new_treatment: "+ Add New Treatment",     empty_title: "Your becoming starts here.",     empty_sub: "Add your first treatment to begin",     add_treatment: "Add Treatment",     needs_attention: "Needs attention",     sessions_tap: "Sessions — tap to view or log",   },   th: {     until_treatment: "อีกนิดก็ถึงเวลาแล้ว",     my_treatments: "ทรีทเมนต์ของฉัน",     add_new: "+ เพิ่มรายการ",     add_new_treatment: "+ เพิ่มทรีทเมนต์ใหม่",     empty_title: "เริ่มต้นการดูแลตัวเองได้เลยนะคะ",     empty_sub: "เพิ่มทรีทเมนต์แรกของคุณได้เลย",     add_treatment: "เพิ่มทรีทเมนต์",     needs_attention: "มีรายการที่ต้องดูแล",     sessions_tap: "แตะเพื่อดูหรือบันทึกเซสชัน",   } };
+const LANGUAGES = ["English","Thai — ภาษาไทย"];  const T = {   en: {     until_treatment: "Until my treatment",     my_treatments: "My treatments",     add_new: "+ Add new",     add_new_treatment: "+ Add New Treatment",     empty_title: "Your becoming starts here.",     empty_sub: "Add your first treatment to begin",     empty_first_package: "Add your first package",     add_treatment: "Add Treatment",     needs_attention: "Needs attention",     sessions_tap: "Sessions — tap to view or log",   },   th: {     until_treatment: "อีกนิดก็ถึงเวลาแล้ว",     my_treatments: "ทรีทเมนต์ของฉัน",     add_new: "+ เพิ่มรายการ",     add_new_treatment: "+ เพิ่มทรีทเมนต์ใหม่",     empty_title: "เริ่มต้นการดูแลตัวเองได้เลยนะคะ",     empty_sub: "เพิ่มทรีทเมนต์แรกของคุณได้เลย",     empty_first_package: "เพิ่มแพ็กเกจแรกของคุณ",     add_treatment: "เพิ่มทรีทเมนต์",     needs_attention: "มีรายการที่ต้องดูแล",     sessions_tap: "แตะเพื่อดูหรือบันทึกเซสชัน",   } };
 const CURRENCIES = ["THB — Thai Baht ฿","USD — US Dollar $","AED — UAE Dirham د.إ"];
 const COUNTRY_CODES = ["+66 TH","+1 US","+44 UK","+65 SG","+81 JP","+82 KR","+86 CN","+33 FR","+971 AE"];
 
@@ -76,7 +77,8 @@ function addDays(d,n){if(!d)return null;const dt=new Date(d);dt.setDate(dt.getDa
 function getNext(t){if(!t.sessions.length)return null;const last=[...t.sessions].sort((a,b)=>new Date(b.date)-new Date(a.date))[0];return addDays(last.date,t.frequency);}
 function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";}
 
-// ─── MOCK OAUTH ───────────────────────────────────────────────────
+// Mock OAuth overlay — no longer opened by Sign in / Sign up.
+// Google uses Firebase popup; Facebook is not wired, so that CTA is hidden.
 function OAuthScreen({provider,onSuccess,onCancel}){
   const [stage,setStage]=useState("browser");
   const [progress,setProgress]=useState(0);
@@ -236,6 +238,15 @@ export default function Become(){
   const [otpError,setOtpError]=useState("");
   const [signupForm,setSignupForm]=useState({name:"",email:"",phone:"",countryCode:"+66 TH",password:""});
   const [loginForm,setLoginForm]=useState({email:"",password:""});
+  const [loginErrors,setLoginErrors]=useState({});
+  const [loginMessage,setLoginMessage]=useState("");
+  const [signupMessage,setSignupMessage]=useState("");
+  const [authBusy,setAuthBusy]=useState("");
+  const [resetForm,setResetForm]=useState({email:""});
+  const [resetErrors,setResetErrors]=useState({});
+  const [resetSuccess,setResetSuccess]=useState("");
+  const [resetMessage,setResetMessage]=useState("");
+  const [justSignedUp,setJustSignedUp]=useState(false);
   const oR0=useRef(),oR1=useRef(),oR2=useRef(),oR3=useRef(),oR4=useRef();
   const otpRefs=[oR0,oR1,oR2,oR3,oR4];
 
@@ -315,6 +326,93 @@ export default function Become(){
   function handleOtpKey(e,i){if(e.key==="Backspace"&&!otp[i]&&i>0)otpRefs[i-1].current&&otpRefs[i-1].current.focus();}
   function verifyOtp(){if(otp.join("")==="12345"){setAuthScreen("app");setOtpError("");}else setOtpError("Incorrect code. Please try again.");}
   function sendOtp(method,contact){setOtpMethod(method);setOtpContact(contact);setOtp(["","","","",""]);setOtpError("");setAuthScreen("otp");}
+  function openForgotPassword(){
+    setResetForm({email:loginForm.email||""});
+    setResetErrors({});
+    setResetSuccess("");
+    setResetMessage("");
+    setAuthScreen("reset");
+  }
+  async function handleSignIn(){
+    const errors=validateSignIn(loginForm);
+    setLoginErrors(errors);
+    setLoginMessage("");
+    if(Object.keys(errors).length)return;
+    setAuthBusy("signin");
+    try{
+      await signInWithEmailAndPassword(auth,loginForm.email.trim(),loginForm.password);
+      setJustSignedUp(false);
+      setAuthScreen("app");
+    }catch(e){
+      setLoginMessage(mapAuthError(e,"signin")||"Couldn't sign in. Please try again.");
+    }finally{
+      setAuthBusy("");
+    }
+  }
+  async function handleGoogleAuth(fromSignup){
+    setLoginMessage("");
+    setSignupMessage("");
+    setAuthBusy("google");
+    try{
+      const r=await signInWithPopup(auth,googleProvider);
+      if(r.user){
+        setProfileForm({name:r.user.displayName||"",email:r.user.email||"",phone:""});
+        setJustSignedUp(!!fromSignup);
+        setAuthScreen("app");
+      }
+    }catch(e){
+      const msg=mapAuthError(e,"google");
+      if(msg){
+        if(fromSignup)setSignupMessage(msg);
+        else setLoginMessage(msg);
+      }
+    }finally{
+      setAuthBusy("");
+    }
+  }
+  async function handlePasswordReset(){
+    const err=validateResetEmail(resetForm.email);
+    setResetErrors(err?{email:err}:{});
+    setResetSuccess("");
+    setResetMessage("");
+    if(err)return;
+    setAuthBusy("reset");
+    try{
+      await sendPasswordResetEmail(auth,resetForm.email.trim());
+      setResetSuccess("Check your inbox — we sent a reset link to "+resetForm.email.trim()+".");
+    }catch(e){
+      setResetMessage(mapAuthError(e,"reset")||"Couldn't send the reset email. Please try again.");
+    }finally{
+      setAuthBusy("");
+    }
+  }
+  async function handleSignUp(){
+    if(!privacyAccepted||!termsAccepted)return;
+    setSignupMessage("");
+    if(!signupForm.email.trim()||!signupForm.password){
+      setSignupMessage("Email and password are required.");
+      return;
+    }
+    if(signupForm.password!==signupForm.confirmPassword){
+      setSignupMessage("Passwords do not match.");
+      return;
+    }
+    setAuthBusy("signup");
+    try{
+      const result=await createUserWithEmailAndPassword(auth,signupForm.email.trim(),signupForm.password);
+      const {updateProfile}=await import("firebase/auth");
+      await updateProfile(result.user,{displayName:signupForm.name});
+      await dataClient.writeProfile(result.user.uid,{name:signupForm.name,email:signupForm.email.trim(),phone:signupForm.phone},{merge:true});
+      setProfileForm({name:signupForm.name,email:signupForm.email.trim(),phone:signupForm.phone});
+      setJustSignedUp(true);
+      setAuthScreen("app");
+    }catch(e){
+      console.error("[Become] Couldn't create your account", e);
+      setSignupMessage(mapAuthError(e,"signup")||"Couldn't create your account. Please try again.");
+    }finally{
+      setAuthBusy("");
+    }
+  }
   function openDot(tId,idx,session){
     setSelectedId(tId);
     if(session){setSessionIdx(idx);setView("session");}
@@ -498,6 +596,13 @@ async function saveEditSession(){
     .btn-g:hover{background:rgba(180,145,95,0.05);}
     .inp{width:100%;padding:13px 16px;border:1.5px solid #EDE5D8;border-radius:14px;font-family:'DM Sans',sans-serif;font-size:14px;color:#1C1612;background:#FAF7F2;outline:none;transition:border 0.2s;}
     .inp:focus{border-color:#B4915F;box-shadow:0 0 0 3px rgba(180,145,95,0.1);}
+    .inp.invalid{border-color:#C05858;}
+    .inp.invalid:focus{box-shadow:0 0 0 3px rgba(192,88,88,0.12);}
+    .field-err{font-size:12px;color:#C05858;margin-top:6px;}
+    .form-banner{font-size:13px;line-height:1.55;padding:12px 14px;border-radius:12px;}
+    .form-banner.err{background:#FAEAEA;color:#C05858;border:1px solid rgba(192,88,88,0.2);}
+    .form-banner.ok{background:#EAF5EE;color:#4A9A6A;border:1px solid rgba(74,154,106,0.2);}
+    .soc:disabled{opacity:0.55;cursor:not-allowed;transform:none;}
     .inp::placeholder{color:#C4B8A8;}
     select.inp{appearance:none;}
     textarea.inp{resize:none;}
@@ -561,7 +666,7 @@ async function saveEditSession(){
       {showPrivacy&&<PolicyModal title="Privacy Policy" sections={PRIVACY_SECTIONS} onClose={()=>setShowPrivacy(false)} onAccept={()=>{setPrivacyAccepted(true);setShowPrivacy(false);}} acceptLabel="I Have Read and Accept"/>}
       {showTerms&&<PolicyModal title="Terms of Service" sections={TERMS_SECTIONS} onClose={()=>setShowTerms(false)} onAccept={()=>{setTermsAccepted(true);setShowTerms(false);}} acceptLabel="I Agree to the Terms"/>}
 
-      {/* OAuth overlay */}
+      {/* Mock OAuth overlay is unused by live CTAs (Google = Firebase popup). */}
       {oauthProvider&&(
         <OAuthScreen
           provider={oauthProvider}
@@ -572,30 +677,83 @@ async function saveEditSession(){
 
       {/* ── LOGIN ── */}
       {authScreen==="login"&&(
-        <div className="app" style={{padding:"0 24px"}}>
-          <div style={{textAlign:"center",padding:"80px 0 36px"}}>
+        <div className="app" style={{padding:"0 24px 48px"}}>
+          <div style={{textAlign:"center",padding:"64px 0 24px"}}>
             <div style={{width:60,height:60,borderRadius:16,background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(180,145,95,0.28)"}}>
               <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:34,fontWeight:300,color:"#FAF7F2",fontStyle:"italic"}}>b</span>
             </div>
             <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:40,fontWeight:300,letterSpacing:4,marginBottom:6}}>become</h1>
             <p style={{fontSize:12,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase"}}>Your best self, on schedule</p>
           </div>
+          <div className="card" style={{padding:"16px 18px",marginBottom:20,textAlign:"left"}}>
+            <p style={{fontSize:10,fontWeight:600,letterSpacing:2,textTransform:"uppercase",color:"#9A8A78",marginBottom:8}}>How it works</p>
+            <p style={{fontSize:13,color:"#4A3C30",lineHeight:1.6,marginBottom:12}}>{LANDING_HEADLINE}</p>
+            <ul style={{margin:"0 0 14px",paddingLeft:18,display:"flex",flexDirection:"column",gap:6}}>
+              {LANDING_BULLETS.map(line=>(
+                <li key={line} style={{fontSize:13,color:"#4A3C30",lineHeight:1.5}}>{line}</li>
+              ))}
+            </ul>
+            <div style={{background:"#FDF0F2",borderRadius:14,padding:"12px 14px",display:"flex",alignItems:"center",gap:12,border:"1px solid rgba(212,120,138,0.18)"}}>
+              <div style={{width:40,height:40,borderRadius:12,background:"#F5CDD4",display:"flex",alignItems:"center",justifyContent:"center",color:"#D4788A",fontSize:18,flexShrink:0}}>✦</div>
+              <div style={{flex:1,minWidth:0}}>
+                <p style={{fontSize:13,fontWeight:600}}>Laser Hair Removal</p>
+                <p style={{fontSize:11,color:"#9A8A78"}}>Glow Clinic · 5 of 8 sessions left</p>
+              </div>
+              <span className="pill pill-ok" style={{fontSize:10,flexShrink:0}}>Active</span>
+            </div>
+          </div>
           <div className="rule"/>
           <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:20}}>
-            <button className="soc" onClick={async()=>{try{const r=await signInWithPopup(auth,googleProvider);if(r.user){setProfileForm({name:r.user.displayName||"",email:r.user.email||"",phone:""});setAuthScreen("app");}}catch(e){showWriteError("Couldn't sign in with Google",e);}}}>{gLogo} Continue with Google</button>
+            <button className="soc" disabled={!!authBusy} onClick={()=>handleGoogleAuth(false)}>{gLogo} {authBusy==="google"?"Connecting…":"Continue with Google"}</button>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
             <div style={{flex:1,height:1,background:"#EDE5D8"}}/><span style={{fontSize:12,color:"#C4B8A8"}}>or</span><div style={{flex:1,height:1,background:"#EDE5D8"}}/>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:24}}>
-            <input className="inp" placeholder="Email address" value={loginForm.email} onChange={e=>setLoginForm({...loginForm,email:e.target.value})}/>
-            <input className="inp" type="password" placeholder="Password" value={loginForm.password} onChange={e=>setLoginForm({...loginForm,password:e.target.value})}/>
-            <button className="btn btn-c" onClick={async()=>{try{await signInWithEmailAndPassword(auth,loginForm.email,loginForm.password);setAuthScreen("app");}catch(e){showWriteError("Couldn't sign in",e);}}}>Sign In</button>
+            <div>
+              <input className={`inp${loginErrors.email?" invalid":""}`} type="email" autoComplete="email" placeholder="Email address" value={loginForm.email} onChange={e=>{setLoginForm({...loginForm,email:e.target.value});if(loginErrors.email)setLoginErrors({...loginErrors,email:undefined});}}/>
+              {loginErrors.email&&!loginErrors.password&&<p className="field-err">{loginErrors.email}</p>}
+            </div>
+            <div>
+              <input className={`inp${loginErrors.password?" invalid":""}`} type="password" autoComplete="current-password" placeholder="Password" value={loginForm.password} onChange={e=>{setLoginForm({...loginForm,password:e.target.value});if(loginErrors.password)setLoginErrors({...loginErrors,password:undefined});}} onKeyDown={e=>{if(e.key==="Enter")handleSignIn();}}/>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginTop:8}}>
+                <p className="field-err" style={{marginTop:0,flex:1,minHeight:16}}>{loginErrors.password||""}</p>
+                <button type="button" onClick={openForgotPassword} style={{background:"none",border:"none",fontSize:13,fontWeight:600,color:"#B4915F",cursor:"pointer",fontFamily:"inherit",padding:0,flexShrink:0,lineHeight:1.3}}>Forgot password?</button>
+              </div>
+            </div>
+            {loginMessage&&<p className="form-banner err" role="alert">{loginMessage}</p>}
+            <button className="btn btn-c" disabled={!!authBusy} onClick={handleSignIn}>{authBusy==="signin"?"Signing in…":"Sign In"}</button>
           </div>
           <p style={{textAlign:"center",fontSize:13,color:"#9A8A78",marginBottom:32}}>
             Don't have an account?{" "}
-            <button onClick={()=>setAuthScreen("signup")} style={{background:"none",border:"none",fontSize:13,fontWeight:600,color:"#B4915F",cursor:"pointer",fontFamily:"inherit"}}>Sign up</button>
+            <button onClick={()=>{setSignupMessage("");setAuthScreen("signup");}} style={{background:"none",border:"none",fontSize:13,fontWeight:600,color:"#B4915F",cursor:"pointer",fontFamily:"inherit"}}>Sign up</button>
           </p>
+        </div>
+      )}
+
+      {/* ── FORGOT PASSWORD ── */}
+      {authScreen==="reset"&&(
+        <div className="app" style={{padding:"0 24px 48px"}}>
+          <div style={{padding:"56px 0 28px",display:"flex",alignItems:"center",gap:14}}>
+            <button className="back" onClick={()=>{setAuthScreen("login");setResetSuccess("");setResetMessage("");}}>← Back</button>
+            <div>
+              <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:400}}>Reset password</h2>
+              <p style={{fontSize:13,color:"#9A8A78",marginTop:2}}>We'll email you a reset link</p>
+            </div>
+          </div>
+          <p style={{fontSize:13,color:"#4A3C30",lineHeight:1.6,marginBottom:20}}>
+            Enter the email for your Become account. If it matches an account, we'll send a link to choose a new password.
+          </p>
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div>
+              <span className="lbl">Email address</span>
+              <input className={`inp${resetErrors.email?" invalid":""}`} type="email" autoComplete="email" placeholder="you@email.com" value={resetForm.email} onChange={e=>{setResetForm({email:e.target.value});if(resetErrors.email)setResetErrors({});}} onKeyDown={e=>{if(e.key==="Enter")handlePasswordReset();}}/>
+              {resetErrors.email&&<p className="field-err">{resetErrors.email}</p>}
+            </div>
+            {resetSuccess&&<p className="form-banner ok" role="status">{resetSuccess}</p>}
+            {resetMessage&&<p className="form-banner err" role="alert">{resetMessage}</p>}
+            <button className="btn btn-c" disabled={!!authBusy} onClick={handlePasswordReset}>{authBusy==="reset"?"Sending…":"Send reset link"}</button>
+          </div>
         </div>
       )}
 
@@ -623,12 +781,14 @@ async function saveEditSession(){
             </div>
             <div><span className="lbl">Password</span><div style={{position:"relative"}}><input className="inp" type={signupForm.showPassword?"text":"password"} placeholder="At least 8 characters" value={signupForm.password} onChange={e=>setSignupForm({...signupForm,password:e.target.value})} style={{paddingRight:44}}/><button onClick={()=>setSignupForm({...signupForm,showPassword:!signupForm.showPassword})} style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"#9A8A78",fontSize:16}}>{signupForm.showPassword?"🙈":"👁"}</button></div></div> <div><span className="lbl">Confirm Password</span><div style={{position:"relative"}}><input className="inp" type={signupForm.showConfirm?"text":"password"} placeholder="Re-enter your password" value={signupForm.confirmPassword||""} onChange={e=>setSignupForm({...signupForm,confirmPassword:e.target.value})} style={{paddingRight:44}}/><button onClick={()=>setSignupForm({...signupForm,showConfirm:!signupForm.showConfirm})} style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"#9A8A78",fontSize:16}}>{signupForm.showConfirm?"🙈":"👁"}</button></div></div>
             <div className="rule"/>
+            <p style={{fontSize:13,color:"#4A3C30",lineHeight:1.6}}>{SIGNUP_NEXT_COPY}</p>
+            {signupMessage&&<p className="form-banner err" role="alert">{signupMessage}</p>}
             <div style={{display:"flex",gap:10}}>
-              <button className="btn btn-c" style={{flex:1,opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted||isSaving} onClick={async()=>{if(signupForm.password!==signupForm.confirmPassword){alert("Passwords do not match!");return;}try{const result=await createUserWithEmailAndPassword(auth,signupForm.email,signupForm.password);const {updateProfile}=await import("firebase/auth");await updateProfile(result.user,{displayName:signupForm.name});await dataClient.writeProfile(result.user.uid,{name:signupForm.name,email:signupForm.email,phone:signupForm.phone},{merge:true});setProfileForm({name:signupForm.name,email:signupForm.email,phone:signupForm.phone});setAuthScreen("app");}catch(e){showWriteError("Couldn't create your account",e);}}}>Sign Up</button>
+              <button className="btn btn-c" style={{flex:1,opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted||!!authBusy} onClick={handleSignUp}>{authBusy==="signup"?"Creating account…":"Sign Up"}</button>
             </div>
             <div className="rule"/>
-            <button className="soc" style={{opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted} onClick={()=>setOauthProvider("google")}>{gLogo} Sign up with Google</button>
-            <button className="soc" style={{background:"#1877F2",border:"none",color:"#FFF",opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted} onClick={()=>setOauthProvider("facebook")}>{fLogo} Sign up with Facebook</button>
+            <button className="soc" style={{opacity:privacyAccepted&&termsAccepted?1:0.4}} disabled={!privacyAccepted||!termsAccepted||!!authBusy} onClick={()=>handleGoogleAuth(true)}>{gLogo} {authBusy==="google"?"Connecting…":"Sign up with Google"}</button>
+            <p style={{fontSize:12,color:"#9A8A78",textAlign:"center"}}>Facebook sign-in isn't available yet.</p>
             {/* Acceptance checkboxes */}
             <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:4}}>
               <label style={{display:"flex",alignItems:"flex-start",gap:12,cursor:"pointer"}}>
@@ -776,7 +936,7 @@ async function saveEditSession(){
                     <div className="srow" onClick={()=>setShowTerms(true)}><p style={{fontSize:13,fontWeight:500}}>Terms of Service</p><span style={{color:"#C4B8A8"}}>›</span></div>
                   </div>
                 </div>
-                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){console.error("[Become] Sign out failed",e);}dataClient.resetCache();setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setSyncError("");setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
+                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){console.error("[Become] Sign out failed",e);}dataClient.resetCache();setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setSyncError("");setJustSignedUp(false);setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
                 <p style={{fontSize:11,color:"#C4B8A8",textAlign:"center"}}>Become v1.0.0</p>
               </div>
             </div>
@@ -1021,7 +1181,7 @@ async function saveEditSession(){
                       <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,color:"#FAF7F2",fontStyle:"italic",fontWeight:300}}>b</span>
                     </div>
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:300,color:"#9A8A78",fontStyle:"italic",marginBottom:8}}>Your becoming starts here.</p>
-                    <p style={{fontSize:13,color:"#C4B8A8",marginBottom:28}}>Add your first treatment to begin</p>
+                    <p style={{fontSize:13,color:"#C4B8A8",marginBottom:28}}>{justSignedUp?t("empty_first_package"):t("empty_sub")}</p>
                     <button className="btn btn-c" style={{width:"auto",padding:"14px 32px"}} onClick={()=>setShowAdd(true)}>Add Treatment</button>
                   </div>
                 )}
