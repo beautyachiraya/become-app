@@ -1,7 +1,10 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, setDoc, getDocs, deleteDoc, getDoc } from "firebase/firestore";
+import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
+import { createDataClient, formatWriteError } from "./userData";
+
+const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
 
 const googleProvider = new GoogleAuthProvider(); googleProvider.setCustomParameters({prompt:"select_account"});
 const B = {
@@ -276,6 +279,14 @@ export default function Become(){
   const [termsAccepted,setTermsAccepted]=useState(false);
   const [form,setForm]=useState({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:""});
   const [logForm,setLogForm]=useState({date:new Date().toISOString().split("T")[0],note:"",photo:null});
+  const [syncError,setSyncError]=useState("");
+  const [isSaving,setIsSaving]=useState(false);
+
+  function showWriteError(action, error){
+    const message=formatWriteError(action, error);
+    setSyncError(message);
+    alert(message);
+  }
 
   const sel=treatments.find(t=>t.id===selectedId);
   const pal=sel?PALETTE[sel.palette%PALETTE.length]:PALETTE[0];
@@ -283,7 +294,25 @@ export default function Become(){
   const sortedSessions=sel?[...sel.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
 
-  useEffect(()=>{   if(authScreen==="app"){     const user=auth.currentUser;     if(!user)return;     getDoc(doc(db,"users",user.uid,"profile","info")).then(snap=>{       if(snap.exists()){         setProfileForm(snap.data());         if(snap.data().photoURL)setProfilePhoto(snap.data().photoURL);       }     });     getDocs(collection(db,"users",user.uid,"treatments")).then(snap=>{       if(!snap.empty){         setTreatments(snap.docs.map(d=>d.data()));       }     });   } },[authScreen]);  const urgent=useMemo(()=>treatments.filter(t=>{
+  useEffect(()=>{
+    if(authScreen!=="app")return;
+    const user=auth.currentUser;
+    if(!user)return;
+    let cancelled=false;
+    dataClient.loadUserData(user.uid).then(({profile,treatments:loaded})=>{
+      if(cancelled)return;
+      if(profile){
+        setProfileForm(profile);
+        if(profile.photoURL)setProfilePhoto(profile.photoURL);
+      }
+      if(loaded.length)setTreatments(loaded);
+    }).catch(e=>{
+      if(cancelled)return;
+      showWriteError("Couldn't load your profile", e);
+    });
+    return()=>{cancelled=true;};
+  },[authScreen]);
+  const urgent=useMemo(()=>treatments.filter(t=>{
     const e=daysUntil(t.expiryDate),r=t.totalSessions-t.sessions.length;
     return(e!==null&&e<=30&&e>=0)||r===0;
   }),[treatments]);
@@ -373,11 +402,12 @@ export default function Become(){
       const result=await createUserWithEmailAndPassword(auth,signupForm.email.trim(),signupForm.password);
       const {updateProfile}=await import("firebase/auth");
       await updateProfile(result.user,{displayName:signupForm.name});
-      await setDoc(doc(db,"users",result.user.uid,"profile","info"),{name:signupForm.name,email:signupForm.email.trim(),phone:signupForm.phone});
+      await dataClient.writeProfile(result.user.uid,{name:signupForm.name,email:signupForm.email.trim(),phone:signupForm.phone},{merge:true});
       setProfileForm({name:signupForm.name,email:signupForm.email.trim(),phone:signupForm.phone});
       setJustSignedUp(true);
       setAuthScreen("app");
     }catch(e){
+      console.error("[Become] Couldn't create your account", e);
       setSignupMessage(mapAuthError(e,"signup")||"Couldn't create your account. Please try again.");
     }finally{
       setAuthBusy("");
@@ -389,27 +419,32 @@ export default function Become(){
     else{setLogTargetIdx(idx);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}
   }
 async function logSession(){
+    const current=treatments.find(t=>String(t.id)===String(selectedId));
+    if(!current)return;
     const user=auth.currentUser;
-    let photoURL=null;
-if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
-      const blob=await fetch(logForm.photo).then(r=>r.blob());
-      const photoRef=ref(storage,`users/${user.uid}/photos/${Date.now()}`);
-      await uploadBytes(photoRef,blob);
-      photoURL=await getDownloadURL(photoRef);
-    }
-    const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:photoURL};
-    const updatedTreatments=treatments.map(t=>{
-      if(String(t.id)===String(selectedId)){
-        const updatedT={...t,sessions:[...t.sessions,newSession]};
-        const user=auth.currentUser;
-        if(user){setDoc(doc(db,"users",user.uid,"treatments",String(t.id)),updatedT);}
-        return updatedT;
+    setIsSaving(true);
+    try{
+      let photoURL=null;
+      if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
+        const blob=await fetch(logForm.photo).then(r=>r.blob());
+        const photoRef=ref(storage,`users/${user.uid}/photos/${Date.now()}`);
+        await uploadBytes(photoRef,blob);
+        photoURL=await getDownloadURL(photoRef);
+      }else if(logForm.photo){
+        photoURL=logForm.photo;
       }
-      return t;
-    });
-    setTreatments(updatedTreatments);
-    setShowLog(false);
-    setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});
+      const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:photoURL};
+      const updatedT={...current,sessions:[...current.sessions,newSession]};
+      if(user)await dataClient.writeTreatment(user.uid,updatedT);
+      setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
+      setSyncError("");
+      setShowLog(false);
+      setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});
+    }catch(e){
+      showWriteError("Couldn't save this session", e);
+    }finally{
+      setIsSaving(false);
+    }
   }
   function updatePhoto(photo){
     setTreatments(prev=>prev.map(t=>{
@@ -424,42 +459,124 @@ if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
     const freq=form.frequencyLabel==="Custom"?parseInt(form.customDays):form.frequency;
     const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,sessions:[]};
     const user=auth.currentUser;
-    if(user){
-      try{
-        await setDoc(doc(db,"users",user.uid,"treatments",String(newT.id)),newT);
-      }catch(e){
-        alert("Couldn't save your treatment: "+e.message);
-        return;
-      }
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeTreatment(user.uid,newT);
+      setTreatments([...treatments,newT]);
+      setSyncError("");
+      setShowAdd(false);
+      setForm({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:""});
+    }catch(e){
+      showWriteError("Couldn't save your treatment", e);
+    }finally{
+      setIsSaving(false);
     }
-    setTreatments([...treatments,newT]);
-    setShowAdd(false);
-    setForm({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:""});
   }
-  function deleteTreatment(id){   setTreatments(treatments.filter(t=>t.id!==id));   const user=auth.currentUser;   if(user){deleteDoc(doc(db,"users",user.uid,"treatments",String(id)));}   setView("home"); }
+  async function deleteTreatment(id){
+    const user=auth.currentUser;
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.deleteTreatment(user.uid,id);
+      setTreatments(treatments.filter(t=>t.id!==id));
+      setSyncError("");
+      setView("home");
+    }catch(e){
+      showWriteError("Couldn't remove this treatment", e);
+    }finally{
+      setIsSaving(false);
+    }
+  }
   function goToDetail(id){setSelectedId(id);setDetailTab("sessions");setView("detail");}
   function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||""});setShowEdit(true);}
-function saveEdit(){
+async function saveEdit(){
     if(!editForm||!sel)return;
     const freq=editForm.frequencyLabel==="Custom"?parseInt(editForm.customDays):editForm.frequency;
     const updatedT={...sel,name:editForm.name,clinic:editForm.clinic,brandUnit:editForm.brandUnit,totalSessions:parseInt(editForm.totalSessions),frequency:freq,frequencyLabel:editForm.frequencyLabel,expiryDate:editForm.expiryDate,notes:editForm.notes};
     const user=auth.currentUser;
-    if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updatedT);}
-    setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
-    setShowEdit(false);
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeTreatment(user.uid,updatedT);
+      setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
+      setSyncError("");
+      setShowEdit(false);
+    }catch(e){
+      showWriteError("Couldn't save your treatment", e);
+    }finally{
+      setIsSaving(false);
+    }
   }
   function openEditSession(session){setEditSessionForm({date:session.date,note:session.note||""});setShowEditSession(true);}
-function saveEditSession(){
+async function saveEditSession(){
     if(!editSessionForm||!selectedId||sessionIdx===null)return;
     const currentTreatment=treatments.find(t=>String(t.id)===String(selectedId));
     if(!currentTreatment)return;
     const sorted=[...currentTreatment.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
     const target=sorted[sessionIdx];
     const updatedT={...currentTreatment,sessions:currentTreatment.sessions.map(s=>s.id===target.id?{...s,date:editSessionForm.date,note:editSessionForm.note}:s)};
-    setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
     const user=auth.currentUser;
-    if(user){setDoc(doc(db,"users",user.uid,"treatments",String(selectedId)),updatedT);}
-    setShowEditSession(false);
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeTreatment(user.uid,updatedT);
+      setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
+      setSyncError("");
+      setShowEditSession(false);
+    }catch(e){
+      showWriteError("Couldn't save this session", e);
+    }finally{
+      setIsSaving(false);
+    }
+  }
+  async function removeSession(){
+    if(!sel||!selSession)return;
+    const updated={...sel,sessions:sel.sessions.filter(s=>s.id!==selSession.id)};
+    const user=auth.currentUser;
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeTreatment(user.uid,updated);
+      setTreatments(treatments.map(t=>t.id!==sel.id?t:updated));
+      setSyncError("");
+      setView("detail");
+      setDetailTab("sessions");
+    }catch(e){
+      showWriteError("Couldn't remove this session", e);
+    }finally{
+      setIsSaving(false);
+    }
+  }
+  async function saveProfile(){
+    const user=auth.currentUser;
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeProfile(user.uid,{name:profileForm.name,email:profileForm.email,phone:profileForm.phone},{merge:true});
+      setSyncError("");
+      setShowEditProfile(false);
+    }catch(e){
+      showWriteError("Couldn't save your profile", e);
+    }finally{
+      setIsSaving(false);
+    }
+  }
+  async function uploadProfilePhoto(file){
+    if(!file)return;
+    const preview=new FileReader();
+    preview.onload=ev=>setProfilePhoto(ev.target.result);
+    preview.readAsDataURL(file);
+    const user=auth.currentUser;
+    if(!user)return;
+    setIsSaving(true);
+    try{
+      const pRef=ref(storage,"users/"+user.uid+"/profile");
+      await uploadBytes(pRef,file);
+      const url=await getDownloadURL(pRef);
+      await dataClient.writeProfile(user.uid,{photoURL:url},{merge:true});
+      setProfilePhoto(url);
+      setProfileForm(prev=>({...prev,photoURL:url}));
+      setSyncError("");
+    }catch(e){
+      showWriteError("Couldn't save your photo", e);
+    }finally{
+      setIsSaving(false);
+    }
   }
   const S=`
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
@@ -536,6 +653,14 @@ function saveEditSession(){
   return (
     <div style={{minHeight:"100vh",background:"transparent",fontFamily:"'DM Sans',sans-serif",color:"#1C1612"}}>
       <style>{S}</style>
+      {syncError&&(
+        <div role="alert" style={{position:"fixed",top:0,left:0,right:0,zIndex:500,display:"flex",justifyContent:"center",padding:"12px 16px",pointerEvents:"none"}}>
+          <div style={{pointerEvents:"auto",maxWidth:430,width:"100%",background:"#FAEAEA",border:"1px solid rgba(192,88,88,0.28)",borderRadius:14,padding:"12px 14px",display:"flex",gap:10,alignItems:"flex-start",boxShadow:"0 8px 24px rgba(28,22,18,0.08)"}}>
+            <p style={{flex:1,fontSize:13,color:"#C05858",lineHeight:1.55,fontWeight:500}}>{syncError}</p>
+            <button type="button" onClick={()=>setSyncError("")} aria-label="Dismiss error" style={{background:"none",border:"none",color:"#C05858",fontSize:18,cursor:"pointer",lineHeight:1,padding:"0 2px",fontFamily:"inherit"}}>×</button>
+          </div>
+        </div>
+      )}
 
       {/* Policy modals — rendered at root so accessible from any screen */}
       {showPrivacy&&<PolicyModal title="Privacy Policy" sections={PRIVACY_SECTIONS} onClose={()=>setShowPrivacy(false)} onAccept={()=>{setPrivacyAccepted(true);setShowPrivacy(false);}} acceptLabel="I Have Read and Accept"/>}
@@ -771,7 +896,7 @@ function saveEditSession(){
                       </svg>
                     </div>
                     <input ref={profilePhotoRef} type="file" accept="image/*" style={{display:"none"}}
-                      onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setProfilePhoto(ev.target.result);r.readAsDataURL(f);const user=auth.currentUser;if(user){const pRef=ref(storage,"users/"+user.uid+"/profile");uploadBytes(pRef,f).then(()=>getDownloadURL(pRef)).then(url=>{setProfilePhoto(url);setProfileForm(prev=>({...prev,photoURL:url}));return setDoc(doc(db,"users",user.uid,"profile","info"),{photoURL:url},{merge:true});}).catch(err=>{alert("Failed to save photo: "+err.message);});}}}/>
+                      onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;uploadProfilePhoto(f);}}/>
                   </div>
                   <div>
                     <p style={{fontSize:17,fontWeight:600}}>{profileForm.name}</p>
@@ -811,7 +936,7 @@ function saveEditSession(){
                     <div className="srow" onClick={()=>setShowTerms(true)}><p style={{fontSize:13,fontWeight:500}}>Terms of Service</p><span style={{color:"#C4B8A8"}}>›</span></div>
                   </div>
                 </div>
-                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){}setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setJustSignedUp(false);setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
+                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){console.error("[Become] Sign out failed",e);}dataClient.resetCache();setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setSyncError("");setJustSignedUp(false);setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
                 <p style={{fontSize:11,color:"#C4B8A8",textAlign:"center"}}>Become v1.0.0</p>
               </div>
             </div>
@@ -1309,8 +1434,8 @@ function saveEditSession(){
                 )}
 
                 <div style={{textAlign:"center",marginTop:36}}>
-                  <button onClick={()=>deleteTreatment(sel.id)} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:"pointer",fontWeight:500}}>
-                    Remove this treatment
+                  <button onClick={()=>deleteTreatment(sel.id)} disabled={isSaving} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:isSaving?"not-allowed":"pointer",fontWeight:500}}>
+                    {isSaving?"Removing…":"Remove this treatment"}
                   </button>
                 </div>
               </div>
@@ -1375,7 +1500,7 @@ function saveEditSession(){
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:300,color:"#4A3C30",lineHeight:1.7,fontStyle:"italic"}}>"{selSession.note}"</p>
                   </div>
                 )}
-                <div style={{textAlign:"center",marginTop:8,marginBottom:8}}>                   <button onClick={()=>{const updated={...sel,sessions:sel.sessions.filter(s=>s.id!==selSession.id)};setTreatments(treatments.map(t=>t.id!==sel.id?t:updated));const user=auth.currentUser;if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updated).then(()=>{setView("detail");setDetailTab("sessions");});}else{setView("detail");setDetailTab("sessions");}}} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:"pointer",fontWeight:500}}>                     Remove this session                   </button>                 </div>                 {ac&&(
+                <div style={{textAlign:"center",marginTop:8,marginBottom:8}}>                   <button onClick={removeSession} disabled={isSaving} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:isSaving?"not-allowed":"pointer",fontWeight:500}}>                     {isSaving?"Removing…":"Remove this session"}                   </button>                 </div>                 {ac&&(
                   <div style={{background:pal.bg,borderRadius:20,padding:"18px 20px",border:`1px solid ${pal.accent}15`}}>
                     <p style={{fontSize:10,fontWeight:600,color:pal.text,letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Aftercare reminder</p>
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:300,lineHeight:1.65,fontStyle:"italic",marginBottom:14}}>"{ac.tip}"</p>
@@ -1386,7 +1511,7 @@ function saveEditSession(){
                   </div>
           )}
           <div style={{textAlign:"center",marginTop:24}}>
-            <button onClick={()=>{const updated={...sel,sessions:sel.sessions.filter(s=>s.id!==selSession.id)};setTreatments(treatments.map(t=>t.id!==sel.id?t:updated));const user=auth.currentUser;if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updated);}setView("detail");setDetailTab("sessions");}} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:"pointer",fontWeight:500}}>Remove this session</button>
+            <button onClick={removeSession} disabled={isSaving} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:isSaving?"not-allowed":"pointer",fontWeight:500}}>{isSaving?"Removing…":"Remove this session"}</button>
           </div>
         </div>
       </div>
@@ -1419,7 +1544,7 @@ function saveEditSession(){
                   </div>
                   {form.frequencyLabel==="Custom"&&<div><span className="lbl">Every how many days?</span><input className="inp" type="number" placeholder="e.g. 45" value={form.customDays} onChange={e=>setForm({...form,customDays:e.target.value})}/></div>}
                   <div><span className="lbl">Notes (optional)</span><textarea className="inp" rows={2} placeholder="Area treated, units, add-ons..." value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></div>
-                  <button className="btn btn-c" style={{marginTop:4}} onClick={addTreatment} disabled={!form.totalSessions||!form.clinic}>Add to My Diary</button>
+                  <button className="btn btn-c" style={{marginTop:4}} onClick={addTreatment} disabled={!form.totalSessions||!form.clinic||isSaving}>{isSaving?"Saving…":"Add to My Diary"}</button>
                 </div>
               </div>
             </div>
@@ -1453,7 +1578,7 @@ function saveEditSession(){
                       onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setLogForm(lf=>({...lf,photo:ev.target.result}));r.readAsDataURL(f);}}/>
                   </div>
                   <div><span className="lbl">How did it go?</span><textarea className="inp" rows={3} placeholder="Results, any reactions, how you feel..." value={logForm.note} onChange={e=>setLogForm({...logForm,note:e.target.value})}/></div>
-                  <button className="btn" style={{background:pal.accent,color:"#FFF",boxShadow:`0 8px 24px ${pal.accent}28`,marginTop:4,fontWeight:600}} onClick={logSession}>Save Session</button>
+                  <button className="btn" style={{background:pal.accent,color:"#FFF",boxShadow:`0 8px 24px ${pal.accent}28`,marginTop:4,fontWeight:600}} onClick={logSession} disabled={isSaving}>{isSaving?"Saving…":"Save Session"}</button>
                 </div>
               </div>
             </div>
@@ -1517,8 +1642,8 @@ function saveEditSession(){
                     <span className="lbl">Session notes</span>
                     <textarea className="inp" rows={4} placeholder="Results, reactions, how you felt..." value={editSessionForm.note} onChange={e=>setEditSessionForm({...editSessionForm,note:e.target.value})}/>
                   </div>
-                  <button className="btn btn-c" style={{marginTop:4}} onClick={saveEditSession} disabled={!editSessionForm.date}>
-                    Save Changes
+                  <button className="btn btn-c" style={{marginTop:4}} onClick={saveEditSession} disabled={!editSessionForm.date||isSaving}>
+                    {isSaving?"Saving…":"Save Changes"}
                   </button>
                   <button onClick={()=>setShowEditSession(false)}
                     style={{background:"none",border:"none",color:"#9A8A78",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:500,padding:"4px 0"}}>
@@ -1572,8 +1697,8 @@ function saveEditSession(){
                   <div><span className="lbl">Notes (optional)</span>
                     <textarea className="inp" rows={2} placeholder="Area treated, units, add-ons..." value={editForm.notes} onChange={e=>setEditForm({...editForm,notes:e.target.value})}/>
                   </div>
-                  <button className="btn btn-c" style={{marginTop:4}} onClick={saveEdit} disabled={!editForm.totalSessions||!editForm.clinic}>
-                    Save Changes
+                  <button className="btn btn-c" style={{marginTop:4}} onClick={saveEdit} disabled={!editForm.totalSessions||!editForm.clinic||isSaving}>
+                    {isSaving?"Saving…":"Save Changes"}
                   </button>
                   <button onClick={()=>setShowEdit(false)}
                     style={{background:"none",border:"none",color:"#9A8A78",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:500,padding:"4px 0"}}>
@@ -1624,8 +1749,8 @@ function saveEditSession(){
                   <div><span className="lbl">Phone number</span>
                     <input className="inp" type="tel" placeholder="+66 89 123 4567" value={profileForm.phone} onChange={e=>setProfileForm({...profileForm,phone:e.target.value})}/>
                   </div>
-                 <button className="btn btn-c" style={{marginTop:4}} onClick={async()=>{const user=auth.currentUser;if(user){try{await setDoc(doc(db,"users",user.uid,"profile","info"),{name:profileForm.name,email:profileForm.email,phone:profileForm.phone},{merge:true});}catch(e){alert("Failed to save profile: "+e.message);return;}}setShowEditProfile(false);}} disabled={!profileForm.name||!profileForm.email}>
-                    Save Changes
+                 <button className="btn btn-c" style={{marginTop:4}} onClick={saveProfile} disabled={!profileForm.name||!profileForm.email||isSaving}>
+                    {isSaving?"Saving…":"Save Changes"}
                   </button>
                   <button onClick={()=>setShowEditProfile(false)}
                     style={{background:"none",border:"none",color:"#9A8A78",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:500,padding:"4px 0"}}>
