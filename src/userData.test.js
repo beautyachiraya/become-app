@@ -19,6 +19,10 @@ function makeClient(overrides) {
     db: {},
     doc: (_db, ...path) => path.join("/"),
     collection: (_db, ...path) => path.join("/"),
+    getDoc: jest.fn(),
+    getDocs: jest.fn(),
+    setDoc: jest.fn(),
+    deleteDoc: jest.fn(),
     ...overrides,
   });
 }

@@ -1,22 +1,13 @@
-import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
-import { db } from "./firebase";
-
 export function formatWriteError(action, error) {
   const detail = (error && error.message) ? error.message : "Please try again.";
   console.error(`[Become] ${action}`, error);
   return `${action}: ${detail}`;
 }
 
-export function createDataClient(overrides = {}) {
-  const api = {
-    db: overrides.db || db,
-    getDoc: overrides.getDoc || getDoc,
-    getDocs: overrides.getDocs || getDocs,
-    setDoc: overrides.setDoc || setDoc,
-    deleteDoc: overrides.deleteDoc || deleteDoc,
-    doc: overrides.doc || doc,
-    collection: overrides.collection || collection,
-  };
+export function createDataClient(api) {
+  if (!api || !api.getDoc || !api.getDocs || !api.setDoc || !api.deleteDoc || !api.doc || !api.collection) {
+    throw new Error("createDataClient requires Firestore functions");
+  }
 
   let inFlightUid = null;
   let inFlightPromise = null;
@@ -66,5 +57,3 @@ export function createDataClient(overrides = {}) {
     },
   };
 }
-
-export const dataClient = createDataClient();
