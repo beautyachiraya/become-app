@@ -1298,7 +1298,7 @@ async function saveEditSession(){
                       <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,color:"#FAF7F2",fontStyle:"italic",fontWeight:300}}>b</span>
                     </div>
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:300,color:"#9A8A78",fontStyle:"italic",marginBottom:8}}>{t("empty_title")}</p>
-                    <p style={{fontSize:13,color:"#C4B8A8",marginBottom:28}}>{justSignedUp?t("empty_first_package"):historyPacks.length?t("empty_open_sub"):t("empty_sub")}</p>
+                    <p style={{fontSize:13,color:"#C4B8A8",marginBottom:28}}>{historyPacks.length?t("empty_open_sub"):justSignedUp?t("empty_first_package"):t("empty_sub")}</p>
                     <button className="btn btn-c" style={{width:"auto",padding:"14px 32px"}} onClick={()=>setShowAdd(true)}>{t("empty_first_package")}</button>
                   </div>
                 )}
