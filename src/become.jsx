@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, setDoc, getDocs, deleteDoc, getDoc } from "firebase/firestore";
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
-import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY } from "./authForm";
+import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 
 const googleProvider = new GoogleAuthProvider(); googleProvider.setCustomParameters({prompt:"select_account"});
 const B = {
@@ -562,9 +562,12 @@ function saveEditSession(){
           </div>
           <div className="card" style={{padding:"16px 18px",marginBottom:20,textAlign:"left"}}>
             <p style={{fontSize:10,fontWeight:600,letterSpacing:2,textTransform:"uppercase",color:"#9A8A78",marginBottom:8}}>How it works</p>
-            <p style={{fontSize:13,color:"#4A3C30",lineHeight:1.6,marginBottom:14}}>
-              Become tracks beauty treatment packages across clinics — remaining sessions, expiry dates, and visit photos — so you never lose track.
-            </p>
+            <p style={{fontSize:13,color:"#4A3C30",lineHeight:1.6,marginBottom:12}}>{LANDING_HEADLINE}</p>
+            <ul style={{margin:"0 0 14px",paddingLeft:18,display:"flex",flexDirection:"column",gap:6}}>
+              {LANDING_BULLETS.map(line=>(
+                <li key={line} style={{fontSize:13,color:"#4A3C30",lineHeight:1.5}}>{line}</li>
+              ))}
+            </ul>
             <div style={{background:"#FDF0F2",borderRadius:14,padding:"12px 14px",display:"flex",alignItems:"center",gap:12,border:"1px solid rgba(212,120,138,0.18)"}}>
               <div style={{width:40,height:40,borderRadius:12,background:"#F5CDD4",display:"flex",alignItems:"center",justifyContent:"center",color:"#D4788A",fontSize:18,flexShrink:0}}>✦</div>
               <div style={{flex:1,minWidth:0}}>
@@ -584,7 +587,7 @@ function saveEditSession(){
           <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:24}}>
             <div>
               <input className={`inp${loginErrors.email?" invalid":""}`} type="email" autoComplete="email" placeholder="Email address" value={loginForm.email} onChange={e=>{setLoginForm({...loginForm,email:e.target.value});if(loginErrors.email)setLoginErrors({...loginErrors,email:undefined});}}/>
-              {loginErrors.email&&<p className="field-err">{loginErrors.email}</p>}
+              {loginErrors.email&&!loginErrors.password&&<p className="field-err">{loginErrors.email}</p>}
             </div>
             <div>
               <input className={`inp${loginErrors.password?" invalid":""}`} type="password" autoComplete="current-password" placeholder="Password" value={loginForm.password} onChange={e=>{setLoginForm({...loginForm,password:e.target.value});if(loginErrors.password)setLoginErrors({...loginErrors,password:undefined});}} onKeyDown={e=>{if(e.key==="Enter")handleSignIn();}}/>

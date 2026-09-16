@@ -4,14 +4,18 @@ import {
   mapAuthError,
   EMAIL_VERIFICATION_REQUIRED,
   SIGNUP_NEXT_COPY,
+  EMPTY_SIGNIN_ERROR,
+  WRONG_CREDENTIALS_ERROR,
+  LANDING_HEADLINE,
+  LANDING_BULLETS,
 } from "./authForm";
 import { PACKAGE_EXPIRY_DAYS, expiryDaysForPack } from "./packageExpiry";
 
 describe("validateSignIn", () => {
   it("requires email and password on empty submit", () => {
     expect(validateSignIn({ email: "", password: "" })).toEqual({
-      email: "Email is required",
-      password: "Password is required",
+      email: EMPTY_SIGNIN_ERROR,
+      password: EMPTY_SIGNIN_ERROR,
     });
   });
 
@@ -21,10 +25,10 @@ describe("validateSignIn", () => {
 
   it("flags only the missing field", () => {
     expect(validateSignIn({ email: "a@b.com", password: "" })).toEqual({
-      password: "Password is required",
+      password: EMPTY_SIGNIN_ERROR,
     });
     expect(validateSignIn({ email: "   ", password: "x" })).toEqual({
-      email: "Email is required",
+      email: EMPTY_SIGNIN_ERROR,
     });
   });
 });
@@ -41,16 +45,10 @@ describe("validateResetEmail", () => {
 });
 
 describe("mapAuthError", () => {
-  it("maps wrong credentials to a clear sign-in message", () => {
-    expect(mapAuthError({ code: "auth/invalid-credential" })).toBe(
-      "Email or password is incorrect."
-    );
-    expect(mapAuthError({ code: "auth/wrong-password" })).toBe(
-      "Email or password is incorrect."
-    );
-    expect(mapAuthError({ code: "auth/user-not-found" })).toBe(
-      "Email or password is incorrect."
-    );
+  it("maps wrong credentials to the product sign-in message", () => {
+    expect(mapAuthError({ code: "auth/invalid-credential" })).toBe(WRONG_CREDENTIALS_ERROR);
+    expect(mapAuthError({ code: "auth/wrong-password" })).toBe(WRONG_CREDENTIALS_ERROR);
+    expect(mapAuthError({ code: "auth/user-not-found" })).toBe(WRONG_CREDENTIALS_ERROR);
   });
 
   it("maps reset user-not-found separately", () => {
@@ -71,8 +69,19 @@ describe("mapAuthError", () => {
 describe("signup next-step copy", () => {
   it("does not claim email verification unless it is required", () => {
     expect(EMAIL_VERIFICATION_REQUIRED).toBe(false);
-    expect(SIGNUP_NEXT_COPY.toLowerCase()).toContain("land in become");
-    expect(SIGNUP_NEXT_COPY.toLowerCase()).toMatch(/isn.t required/);
+    expect(SIGNUP_NEXT_COPY).toBe(
+      "After you create an account, you'll land in Become and can add your first package."
+    );
+  });
+});
+
+describe("landing copy", () => {
+  it("explains packages, sessions, clinic, and expiry", () => {
+    expect(LANDING_HEADLINE.toLowerCase()).toContain("packages");
+    expect(LANDING_HEADLINE.toLowerCase()).toContain("sessions");
+    expect(LANDING_HEADLINE.toLowerCase()).toContain("clinic");
+    expect(LANDING_HEADLINE.toLowerCase()).toContain("expire");
+    expect(LANDING_BULLETS).toHaveLength(3);
   });
 });
 
