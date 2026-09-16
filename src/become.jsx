@@ -73,11 +73,16 @@ const T = {
     sessions_tap: "Sessions — tap to view or log",
     home_tab: "Home",
     history_tab: "History",
+    booking_tab: "Booking",
     profile_tab: "Profile",
     history_title: "History",
     history_lede: "Used-up and expired packages, and the sessions you completed — newest first.",
     history_empty_title: "Nothing in History yet.",
     history_empty_sub: "When a package is used up or expires, it will land here with the sessions you already had.",
+    booking_title: "Booking",
+    booking_lede: "Clinic appointments, in one calm place.",
+    booking_coming_soon: "Booking — coming soon",
+    booking_empty_sub: "You'll be able to book and see upcoming visits here. Packages stay on Home for now.",
     used_up: "Used up",
     expired: "Expired",
     promo: "Promo",
@@ -101,11 +106,16 @@ const T = {
     sessions_tap: "แตะเพื่อดูหรือบันทึกเซสชัน",
     home_tab: "หน้าหลัก",
     history_tab: "ประวัติ",
+    booking_tab: "จองคิว",
     profile_tab: "โปรไฟล์",
     history_title: "ประวัติ",
     history_lede: "แพ็กเกจที่ใช้ครบหรือหมดอายุ และเซสชันที่ทำไปแล้ว — ใหม่สุดอยู่บน",
     history_empty_title: "ยังไม่มีประวัติ",
     history_empty_sub: "เมื่อแพ็กเกจใช้ครบหรือหมดอายุ จะแสดงที่นี่พร้อมเซสชันที่บันทึกไว้",
+    booking_title: "จองคิว",
+    booking_lede: "นัดคลินิกทั้งหมด ในที่เดียว",
+    booking_coming_soon: "จองคิว — เร็วๆ นี้",
+    booking_empty_sub: "เร็วๆ นี้จะจองและดูนัดได้ที่นี่ ตอนนี้แพ็กเกจยังอยู่ที่หน้าหลัก",
     used_up: "ใช้ครบแล้ว",
     expired: "หมดอายุ",
     promo: "โปรโมชัน",
@@ -710,7 +720,7 @@ async function saveEditSession(){
     .msheet{background:#FAF7F2;border-radius:28px 28px 0 0;padding:12px 24px 52px;width:100%;max-width:430px;max-height:90vh;overflow-y:auto;animation:slideUp 0.32s cubic-bezier(0.16,1,0.3,1);}
     .mhandle{width:36px;height:4px;border-radius:2px;background:#EDE5D8;margin:0 auto 24px;}
     .nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:rgba(250,247,242,0.97);backdrop-filter:blur(20px);border-top:1px solid rgba(180,145,95,0.1);padding:10px 0 26px;display:flex;justify-content:space-around;align-items:center;z-index:100;}
-    .nbtn{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 12px;border-radius:12px;transition:background 0.15s;}
+    .nbtn{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 8px;border-radius:12px;transition:background 0.15s;min-width:56px;}
     .nbtn:hover{background:#F5EFE6;}
     .nbtn.on{background:rgba(180,145,95,0.1);}
     .back{background:#F5EFE6;border:none;border-radius:50px;padding:8px 16px 8px 12px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:#7A6A58;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;}
@@ -1431,6 +1441,28 @@ async function saveEditSession(){
             </div>
           )}
 
+          {/* BOOKING — stub until the appointment flow is wired */}
+          {appTab==="booking"&&view==="home"&&(
+            <div style={{paddingBottom:100}}>
+              <div style={{background:"linear-gradient(160deg,#EDE5D8,#F5EFE6,#FAF7F2)",padding:"calc(60px + env(safe-area-inset-top)) 24px 28px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.12)"}}>
+                <p style={{fontSize:11,color:"#B4915F",fontWeight:600,letterSpacing:2.5,textTransform:"uppercase",marginBottom:10}}>{t("booking_tab")}</p>
+                <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:36,fontWeight:300,lineHeight:1.1}}>{t("booking_title")}</h1>
+                <p style={{fontSize:13,color:"#9A8A78",marginTop:10,maxWidth:300,lineHeight:1.55}}>{t("booking_lede")}</p>
+              </div>
+              <div style={{padding:"20px 20px 0"}}>
+                <div className="card" style={{padding:"52px 24px",textAlign:"center"}}>
+                  <div style={{width:52,height:52,borderRadius:14,background:"#F5EFE6",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px"}}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B4915F" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                    </svg>
+                  </div>
+                  <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:300,color:"#9A8A78",fontStyle:"italic",marginBottom:8}}>{t("booking_coming_soon")}</p>
+                  <p style={{fontSize:13,color:"#C4B8A8",lineHeight:1.55}}>{t("booking_empty_sub")}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* DETAIL */}
           {view==="detail"&&sel&&(
             <div style={{paddingBottom:60}}>
@@ -1947,6 +1979,12 @@ async function saveEditSession(){
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FAF7F2" strokeWidth="2.5" strokeLinecap="round">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
+              </button>
+              <button className={`nbtn ${appTab==="booking"?"on":""}`} onClick={()=>{setAppTab("booking");setView("home");}}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={appTab==="booking"?"#B4915F":"#C4B8A8"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                </svg>
+                <span style={{fontSize:10,fontWeight:600,color:appTab==="booking"?"#B4915F":"#C4B8A8"}}>{t("booking_tab")}</span>
               </button>
               <button className={`nbtn ${appTab==="profile"?"on":""}`} onClick={()=>{setAppTab("profile");setView("home");}}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={appTab==="profile"?"#B4915F":"#C4B8A8"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
