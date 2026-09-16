@@ -1,14 +1,15 @@
 /**
- * Open vs past mapping for the current treatment-card data model.
+ * Open vs history mapping for the current treatment-card data model.
  *
  * Treatments are the package unit today (not a future ledger).
  *   remaining  = totalSessions - sessions.length
  *   expired    = expiryDate is in the past
  *   open/Home  = remaining > 0 AND not expired
- *   past       = remaining === 0 (used up) OR expired
+ *   history    = remaining === 0 (used up) OR expired
+ *   kind       = treatment.kind "promo" | "paid" (missing → paid)
  *
- * There is no status / sessionsRemaining field on the document yet.
- * Do not invent a ledger schema here.
+ * Promo and paid packs stay separate cards / timeline rows.
+ * Never sum remaining across kinds.
  */
 
 export function daysUntil(date, now = new Date()) {
@@ -34,8 +35,8 @@ export function isOpenPack(treatment, now) {
   return sessionsRemaining(treatment) > 0 && !isExpiredPack(treatment, now);
 }
 
-/** Past tab: used-up (0 left) or expired. */
-export function isPastPack(treatment, now) {
+/** History: used-up (0 left) or expired. */
+export function isHistoryPack(treatment, now) {
   return sessionsRemaining(treatment) === 0 || isExpiredPack(treatment, now);
 }
 
@@ -49,9 +50,90 @@ export function isNeedsAttention(treatment, now) {
   return left !== null && left >= 0 && left <= 30;
 }
 
-/** Attach packageId (treatment.id) onto each redeemed visit for Past lists. */
+/** Attach packageId (treatment.id) onto each redeemed visit. */
 export function sessionsWithPackageId(treatment) {
   const packageId = treatment && treatment.id;
   const sessions = Array.isArray(treatment && treatment.sessions) ? treatment.sessions : [];
   return sessions.map((session) => ({ ...session, packageId }));
+}
+
+/** Missing kind is paid so existing treatments still badge, and promo never collapses into paid. */
+export function packKind(treatment) {
+  return treatment && treatment.kind === "promo" ? "promo" : "paid";
+}
+
+/** Soonest expiry first; packs with no expiry date sink to the end. */
+export function compareExpirySoonest(a, b) {
+  const aMissing = !a || !a.expiryDate;
+  const bMissing = !b || !b.expiryDate;
+  if (aMissing && bMissing) return 0;
+  if (aMissing) return 1;
+  if (bMissing) return -1;
+  return new Date(a.expiryDate) - new Date(b.expiryDate);
+}
+
+export function lastSessionDate(treatment) {
+  const sessions = Array.isArray(treatment && treatment.sessions) ? treatment.sessions : [];
+  let latest = null;
+  sessions.forEach((session) => {
+    if (!session || !session.date) return;
+    if (!latest || new Date(session.date) > new Date(latest)) latest = session.date;
+  });
+  return latest;
+}
+
+export function packHistoryDate(treatment, now) {
+  const last = lastSessionDate(treatment);
+  const expiry = treatment && treatment.expiryDate;
+  const usedUp = sessionsRemaining(treatment) === 0;
+  const expired = isExpiredPack(treatment, now);
+  if (usedUp && last && expired && expiry) {
+    return new Date(last) >= new Date(expiry) ? last : expiry;
+  }
+  if (usedUp) return last || expiry || "";
+  if (expired) return expiry || last || "";
+  return last || expiry || "";
+}
+
+/**
+ * Mixed History timeline: finished packs + their completed sessions, newest first.
+ * Each row keeps packageId and kind so promo/paid balances stay unmerged.
+ */
+export function buildHistoryTimeline(treatments, now) {
+  const items = [];
+  (treatments || []).filter((pack) => isHistoryPack(pack, now)).forEach((pack) => {
+    const kind = packKind(pack);
+    const visits = sessionsWithPackageId(pack)
+      .slice()
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    items.push({
+      type: "pack",
+      id: `pack-${pack.id}`,
+      date: packHistoryDate(pack, now),
+      packageId: pack.id,
+      kind,
+      usedUp: sessionsRemaining(pack) === 0,
+      expired: isExpiredPack(pack, now),
+      pack,
+    });
+    visits.forEach((session, idx) => {
+      items.push({
+        type: "session",
+        id: `session-${pack.id}-${session.id}`,
+        date: session.date,
+        packageId: pack.id,
+        kind,
+        pack,
+        session,
+        sessionIndex: idx,
+      });
+    });
+  });
+  items.sort((a, b) => {
+    const dt = new Date(b.date || 0) - new Date(a.date || 0);
+    if (dt !== 0) return dt;
+    if (a.type !== b.type) return a.type === "pack" ? -1 : 1;
+    return 0;
+  });
+  return items;
 }
