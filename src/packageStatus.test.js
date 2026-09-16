@@ -9,6 +9,11 @@ import {
   packKind,
   compareExpirySoonest,
   buildHistoryTimeline,
+  sortOpenPacks,
+  isUsedUp,
+  sessionKind,
+  filterHistoryTimeline,
+  buyMorePrefill,
 } from "./packageStatus";
 
 const NOW = new Date("2026-09-16T12:00:00");
@@ -150,5 +155,89 @@ describe("history timeline", () => {
     ]);
     expect(items.filter((row) => row.packageId === 2).every((row) => row.kind === "promo")).toBe(true);
     expect(items.filter((row) => row.packageId === 4).every((row) => row.kind === "paid")).toBe(true);
+  });
+
+  it("lists completed sessions from still-open packs and never a package row for them", () => {
+    const open = pack({
+      id: 10,
+      name: "Hydrafacial",
+      kind: "promo",
+      totalSessions: 6,
+      expiryDate: "2026-11-01",
+      sessions: [{ id: 1, date: "2026-03-10", note: "glow", sourceAtUse: "promo" }],
+    });
+    const items = buildHistoryTimeline([open], NOW);
+    expect(items.filter((row) => row.type === "pack")).toEqual([]);
+    expect(items).toHaveLength(1);
+    expect(items[0].type).toBe("session");
+    expect(items[0].kind).toBe("promo");
+    expect(items[0].packageId).toBe(10);
+  });
+
+  it("is empty when nothing has been logged, used up, or expired", () => {
+    expect(buildHistoryTimeline([pack({ sessions: [], expiryDate: "2027-01-01" })], NOW)).toEqual([]);
+  });
+});
+
+describe("sessionKind and filters", () => {
+  it("prefers sourceAtUse on the visit over the current pack kind", () => {
+    const paidPack = pack({ kind: "paid" });
+    expect(sessionKind({ sourceAtUse: "promo" }, paidPack)).toBe("promo");
+    expect(sessionKind({ sourceAtUse: "paid" }, { kind: "promo" })).toBe("paid");
+    expect(sessionKind({}, { kind: "promo" })).toBe("promo");
+    expect(sessionKind({}, {})).toBe("paid");
+  });
+
+  it("filters All | Sessions | Packages", () => {
+    const usedUp = pack({
+      id: 4,
+      totalSessions: 1,
+      sessions: [{ id: 1, date: "2026-07-01" }],
+    });
+    const all = buildHistoryTimeline([usedUp], NOW);
+    expect(filterHistoryTimeline(all, "all").map((row) => row.type)).toEqual(["pack", "session"]);
+    expect(filterHistoryTimeline(all, "sessions").every((row) => row.type === "session")).toBe(true);
+    expect(filterHistoryTimeline(all, "packages").every((row) => row.type === "pack")).toBe(true);
+  });
+});
+
+describe("Home open packs", () => {
+  it("keeps two open packs with the same clinic and treatment as two cards", () => {
+    const promo = pack({ id: 50, name: "Botox", clinic: "Glow", kind: "promo", expiryDate: "2026-10-01", sessions: [] });
+    const paid = pack({ id: 51, name: "Botox", clinic: "Glow", kind: "paid", expiryDate: "2026-12-15", sessions: [] });
+    const ordered = sortOpenPacks([paid, promo], NOW);
+    expect(ordered.map((p) => p.id)).toEqual([50, 51]);
+    expect(ordered.map(sessionsRemaining)).toEqual([8, 8]);
+  });
+
+  it("does not list used-up or expired packs on Home", () => {
+    const openSoon = pack({ id: 50, expiryDate: "2026-10-01", sessions: [] });
+    const usedUp = pack({ id: 20, totalSessions: 1, sessions: [{ id: 1 }] });
+    const expired = pack({ id: 40, expiryDate: "2025-09-30", sessions: [] });
+    expect(sortOpenPacks([expired, usedUp, openSoon], NOW).map((p) => p.id)).toEqual([50]);
+    expect(isUsedUp(usedUp)).toBe(true);
+    expect(isUsedUp(openSoon)).toBe(false);
+  });
+});
+
+describe("Buy more starts a new package", () => {
+  it("prefills clinic and treatment but does not copy the finished kind or sessions", () => {
+    const usedPromo = pack({
+      id: 30,
+      name: "Laser Hair Removal",
+      clinic: "Glow Clinic Bangkok",
+      kind: "promo",
+      totalSessions: 3,
+      sessions: [{ id: 1 }, { id: 2 }, { id: 3 }],
+    });
+    const draft = buyMorePrefill(usedPromo);
+    expect(draft.clinic).toBe("Glow Clinic Bangkok");
+    expect(draft.name).toBe("Laser Hair Removal");
+    expect(draft.totalSessions).toBe("3");
+    expect(draft.kind).toBe("paid");
+    expect(draft.expiryDate).toBe("");
+    expect(draft.sessions).toBeUndefined();
+    expect(usedPromo.kind).toBe("promo");
+    expect(usedPromo.sessions).toHaveLength(3);
   });
 });
