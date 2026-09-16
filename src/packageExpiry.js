@@ -1,9 +1,9 @@
 /**
- * Package / promo expiry defaults for the future package ledger.
+ * Package / promo expiry defaults.
  *
  * Product rule: promo packs expire sooner than paid packs.
  * These numbers are temporary until product confirms final values.
- * Do not build ledger UI against this module yet — config only.
+ * Used as the default expiry when adding a package if the user does not pick a date.
  */
 export const PACKAGE_EXPIRY_DAYS = {
   promo: 90,

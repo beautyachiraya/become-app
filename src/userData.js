@@ -1,3 +1,11 @@
+function mapCollection(snap) {
+  if (!snap || snap.empty) return [];
+  return snap.docs.map((d) => {
+    const data = (d.data && d.data()) || {};
+    return { ...data, id: data.id != null ? data.id : d.id };
+  });
+}
+
 export function formatWriteError(action, error) {
   const detail = (error && error.message) ? error.message : "Please try again.";
   console.error(`[Become] ${action}`, error);
@@ -25,9 +33,13 @@ export function createDataClient(api) {
       const promise = Promise.all([
         api.getDoc(api.doc(api.db, "users", uid, "profile", "info")),
         api.getDocs(api.collection(api.db, "users", uid, "treatments")),
-      ]).then(([profileSnap, treatmentsSnap]) => ({
+        api.getDocs(api.collection(api.db, "users", uid, "packages")),
+        api.getDocs(api.collection(api.db, "users", uid, "sessions")),
+      ]).then(([profileSnap, treatmentsSnap, packagesSnap, sessionsSnap]) => ({
         profile: profileSnap.exists() ? profileSnap.data() : null,
-        treatments: treatmentsSnap.empty ? [] : treatmentsSnap.docs.map((d) => d.data()),
+        treatments: mapCollection(treatmentsSnap),
+        packages: mapCollection(packagesSnap),
+        sessions: mapCollection(sessionsSnap),
       })).catch((err) => {
         if (inFlightPromise === promise) {
           inFlightUid = null;
@@ -54,6 +66,28 @@ export function createDataClient(api) {
 
     async writeProfile(uid, data, options = { merge: true }) {
       await api.setDoc(api.doc(api.db, "users", uid, "profile", "info"), data, options);
+    },
+
+    async writePackage(uid, pack) {
+      await api.setDoc(
+        api.doc(api.db, "users", uid, "packages", String(pack.id)),
+        pack
+      );
+    },
+
+    async writeSession(uid, session) {
+      await api.setDoc(
+        api.doc(api.db, "users", uid, "sessions", String(session.id)),
+        session
+      );
+    },
+
+    async deleteSession(uid, id) {
+      await api.deleteDoc(api.doc(api.db, "users", uid, "sessions", String(id)));
+    },
+
+    async deletePackage(uid, id) {
+      await api.deleteDoc(api.doc(api.db, "users", uid, "packages", String(id)));
     },
   };
 }

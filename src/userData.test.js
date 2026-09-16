@@ -10,7 +10,7 @@ function profileSnap(data) {
 function treatmentsSnap(list) {
   return {
     empty: !list.length,
-    docs: list.map((d) => ({ data: () => d })),
+    docs: list.map((d) => ({ id: String(d.id), data: () => d })),
   };
 }
 
@@ -47,10 +47,19 @@ describe("formatWriteError", () => {
   });
 });
 
+function getDocsByCollection(treatments, packages = [], sessions = []) {
+  return jest.fn().mockImplementation((path) => {
+    const key = String(path);
+    if (key.endsWith("packages")) return Promise.resolve(treatmentsSnap(packages));
+    if (key.endsWith("sessions")) return Promise.resolve(treatmentsSnap(sessions));
+    return Promise.resolve(treatmentsSnap(treatments));
+  });
+}
+
 describe("loadUserData", () => {
   it("fetches profile once when called twice for the same uid", async () => {
     const getDoc = jest.fn().mockResolvedValue(profileSnap({ name: "Sophia", photoURL: "x" }));
-    const getDocs = jest.fn().mockResolvedValue(treatmentsSnap([{ id: 1, name: "Botox", sessions: [] }]));
+    const getDocs = getDocsByCollection([{ id: 1, name: "Botox", sessions: [] }]);
     const client = makeClient({ getDoc, getDocs });
 
     const first = client.loadUserData("uid-1");
@@ -60,9 +69,11 @@ describe("loadUserData", () => {
     const result = await first;
     expect(await second).toEqual(result);
     expect(getDoc).toHaveBeenCalledTimes(1);
-    expect(getDocs).toHaveBeenCalledTimes(1);
+    expect(getDocs).toHaveBeenCalledTimes(3);
     expect(result.profile.name).toBe("Sophia");
     expect(result.treatments).toHaveLength(1);
+    expect(result.packages).toEqual([]);
+    expect(result.sessions).toEqual([]);
   });
 
   it("retries after a failed load instead of caching the failure", async () => {
@@ -114,5 +125,20 @@ describe("write helpers", () => {
     const deleteDoc = jest.fn().mockRejectedValue(new Error("not-found"));
     const client = makeClient({ deleteDoc });
     await expect(client.deleteTreatment("uid-1", 3)).rejects.toThrow("not-found");
+  });
+
+  it("writes package and session ledger docs on their own paths", async () => {
+    const setDoc = jest.fn().mockResolvedValue();
+    const client = makeClient({ setDoc });
+    await client.writePackage("uid-1", { id: 9, source: "promo", sessionsRemaining: 3 });
+    await client.writeSession("uid-1", { id: 4, packageId: 9, usedAt: "2026-09-10" });
+    expect(setDoc).toHaveBeenCalledWith(
+      "users/uid-1/packages/9",
+      { id: 9, source: "promo", sessionsRemaining: 3 }
+    );
+    expect(setDoc).toHaveBeenCalledWith(
+      "users/uid-1/sessions/4",
+      { id: 4, packageId: 9, usedAt: "2026-09-10" }
+    );
   });
 });
