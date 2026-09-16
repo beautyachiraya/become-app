@@ -588,10 +588,10 @@ function saveEditSession(){
             </div>
             <div>
               <input className={`inp${loginErrors.password?" invalid":""}`} type="password" autoComplete="current-password" placeholder="Password" value={loginForm.password} onChange={e=>{setLoginForm({...loginForm,password:e.target.value});if(loginErrors.password)setLoginErrors({...loginErrors,password:undefined});}} onKeyDown={e=>{if(e.key==="Enter")handleSignIn();}}/>
-              {loginErrors.password&&<p className="field-err">{loginErrors.password}</p>}
-            </div>
-            <div style={{display:"flex",justifyContent:"flex-end",marginTop:-4}}>
-              <button type="button" onClick={openForgotPassword} style={{background:"none",border:"none",fontSize:13,fontWeight:600,color:"#B4915F",cursor:"pointer",fontFamily:"inherit",padding:0}}>Forgot password?</button>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginTop:8}}>
+                <p className="field-err" style={{marginTop:0,flex:1,minHeight:16}}>{loginErrors.password||""}</p>
+                <button type="button" onClick={openForgotPassword} style={{background:"none",border:"none",fontSize:13,fontWeight:600,color:"#B4915F",cursor:"pointer",fontFamily:"inherit",padding:0,flexShrink:0,lineHeight:1.3}}>Forgot password?</button>
+              </div>
             </div>
             {loginMessage&&<p className="form-banner err" role="alert">{loginMessage}</p>}
             <button className="btn btn-c" disabled={!!authBusy} onClick={handleSignIn}>{authBusy==="signin"?"Signing in…":"Sign In"}</button>
