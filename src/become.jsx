@@ -3,7 +3,7 @@ import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDo
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import { createDataClient, formatWriteError } from "./userData";
-import { daysUntil, sessionsRemaining, isOpenPack, isHistoryPack, isNeedsAttention, packKind, compareExpirySoonest, buildHistoryTimeline } from "./packageStatus";
+import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, packKind, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment } from "./packageStatus";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
 
@@ -142,7 +142,7 @@ const SAMPLE_DATA = [
 function fmtDate(d){if(!d)return"—";return new Date(d).toLocaleDateString("en-US",{day:"numeric",month:"short",year:"numeric"});}
 function fmtShort(d){if(!d)return"—";return new Date(d).toLocaleDateString("en-US",{day:"numeric",month:"short"});}
 function addDays(d,n){if(!d)return null;const dt=new Date(d);dt.setDate(dt.getDate()+n);return dt.toISOString().split("T")[0];}
-function getNext(t){if(!t.sessions||!t.sessions.length)return null;const last=[...t.sessions].sort((a,b)=>new Date(b.date)-new Date(a.date))[0];return addDays(last.date,t.frequency);}
+function getNext(t){const sessions=coerceSessions(t&&t.sessions);if(!sessions.length)return null;const last=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date))[0];return addDays(last.date,t.frequency);}
 function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";}
 function KindPills({value,onChange,promoLabel,paidLabel,kindLabel}){
   return(
@@ -334,6 +334,8 @@ export default function Become(){
   const otpRefs=[oR0,oR1,oR2,oR3,oR4];
 
   const [treatments,setTreatments]=useState([]);
+  const treatmentsRef=useRef(treatments);
+  treatmentsRef.current=treatments;
   const [appTab,setAppTab]=useState("home");
   const [view,setView]=useState("home");
   const [selectedId,setSelectedId]=useState(null);
@@ -371,11 +373,12 @@ export default function Become(){
     alert(message);
   }
 
-  const sel=treatments.find(t=>t.id===selectedId);
-  const pal=sel?PALETTE[sel.palette%PALETTE.length]:PALETTE[0];
+  const sel=treatments.find(t=>String(t.id)===String(selectedId));
+  const pal=sel?PALETTE[(sel.palette||0)%PALETTE.length]:PALETTE[0];
   const ac=sel?(AFTERCARE[sel.name]||AFTERCARE["Other"]):null;
-  const sortedSessions=sel?[...sel.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
+  const sortedSessions=sel?coerceSessions(sel.sessions).slice().sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
+  const selCounts=sel?packSessionCounts(sel):{used:0,total:0,remaining:0};
 
   useEffect(()=>{
     if(authScreen!=="app")return;
@@ -388,14 +391,15 @@ export default function Become(){
         setProfileForm(profile);
         if(profile.photoURL)setProfilePhoto(profile.photoURL);
       }
-      if(loaded.length)setTreatments(loaded);
+      const normalized=(loaded||[]).map(t=>normalizeTreatment(t));
+      setTreatments(prev=>mergeTreatmentsById(prev, normalized));
     }).catch(e=>{
       if(cancelled)return;
       showWriteError("Couldn't load your profile", e);
     });
     return()=>{cancelled=true;};
   },[authScreen]);
-  const openPacks=useMemo(()=>treatments.filter(t=>isOpenPack(t)).slice().sort(compareExpirySoonest),[treatments]);
+  const openPacks=useMemo(()=>listOpenPacks(treatments),[treatments]);
   const historyPacks=useMemo(()=>treatments.filter(t=>isHistoryPack(t)),[treatments]);
   const historyItems=useMemo(()=>buildHistoryTimeline(treatments),[treatments]);
   const urgent=useMemo(()=>openPacks.filter(t=>isNeedsAttention(t)),[openPacks]);
@@ -502,7 +506,7 @@ export default function Become(){
     else{setLogTargetIdx(idx);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}
   }
 async function logSession(){
-    const current=treatments.find(t=>String(t.id)===String(selectedId));
+    const current=(treatmentsRef.current||[]).find(t=>String(t.id)===String(selectedId));
     if(!current)return;
     const user=auth.currentUser;
     setIsSaving(true);
@@ -516,10 +520,10 @@ async function logSession(){
       }else if(logForm.photo){
         photoURL=logForm.photo;
       }
-      const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:photoURL};
-      const updatedT={...current,sessions:[...current.sessions,newSession]};
+      const newSession={id:Date.now(),date:logForm.date,note:logForm.note||"",photo:photoURL};
+      const updatedT=appendSession(current,newSession);
       if(user)await dataClient.writeTreatment(user.uid,updatedT);
-      setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
+      setTreatments(prev=>prev.map(t=>String(t.id)===String(selectedId)?updatedT:t));
       setSyncError("");
       setShowLog(false);
       setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});
@@ -531,21 +535,23 @@ async function logSession(){
   }
   function updatePhoto(photo){
     setTreatments(prev=>prev.map(t=>{
-      if(t.id!==selectedId)return t;
-      const s2=[...t.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
+      if(String(t.id)!==String(selectedId))return t;
+      const sessions=coerceSessions(t.sessions);
+      const s2=[...sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
       const target=s2[sessionIdx];
-      return{...t,sessions:t.sessions.map(s=>s.id===target.id?{...s,photo}:s)};
+      if(!target)return t;
+      return{...t,sessions:sessions.map(s=>s.id===target.id?{...s,photo}:s)};
     }));
   }
   async function addTreatment(){
     const n=form.name==="Other"?form.customName:form.name;
     const freq=form.frequencyLabel==="Custom"?parseInt(form.customDays):form.frequency;
-    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,kind:form.kind==="promo"?"promo":"paid",sessions:[]};
+    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:(treatmentsRef.current||[]).length%PALETTE.length,notes:form.notes,kind:form.kind==="promo"?"promo":"paid",sessions:[]};
     const user=auth.currentUser;
     setIsSaving(true);
     try{
       if(user)await dataClient.writeTreatment(user.uid,newT);
-      setTreatments([...treatments,newT]);
+      setTreatments(prev=>[...prev,newT]);
       setSyncError("");
       setShowAdd(false);
       setForm({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:"",kind:"paid"});
@@ -560,7 +566,7 @@ async function logSession(){
     setIsSaving(true);
     try{
       if(user)await dataClient.deleteTreatment(user.uid,id);
-      setTreatments(treatments.filter(t=>t.id!==id));
+      setTreatments(prev=>prev.filter(t=>String(t.id)!==String(id)));
       setSyncError("");
       setView("home");
     }catch(e){
@@ -596,7 +602,7 @@ async function saveEdit(){
     setIsSaving(true);
     try{
       if(user)await dataClient.writeTreatment(user.uid,updatedT);
-      setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
+      setTreatments(prev=>prev.map(t=>String(t.id)!==String(sel.id)?t:updatedT));
       setSyncError("");
       setShowEdit(false);
     }catch(e){
@@ -608,16 +614,18 @@ async function saveEdit(){
   function openEditSession(session){setEditSessionForm({date:session.date,note:session.note||""});setShowEditSession(true);}
 async function saveEditSession(){
     if(!editSessionForm||!selectedId||sessionIdx===null)return;
-    const currentTreatment=treatments.find(t=>String(t.id)===String(selectedId));
+    const currentTreatment=(treatmentsRef.current||[]).find(t=>String(t.id)===String(selectedId));
     if(!currentTreatment)return;
-    const sorted=[...currentTreatment.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
+    const sessions=coerceSessions(currentTreatment.sessions);
+    const sorted=[...sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
     const target=sorted[sessionIdx];
-    const updatedT={...currentTreatment,sessions:currentTreatment.sessions.map(s=>s.id===target.id?{...s,date:editSessionForm.date,note:editSessionForm.note}:s)};
+    if(!target)return;
+    const updatedT={...currentTreatment,sessions:sessions.map(s=>s.id===target.id?{...s,date:editSessionForm.date,note:editSessionForm.note}:s)};
     const user=auth.currentUser;
     setIsSaving(true);
     try{
       if(user)await dataClient.writeTreatment(user.uid,updatedT);
-      setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
+      setTreatments(prev=>prev.map(t=>String(t.id)===String(selectedId)?updatedT:t));
       setSyncError("");
       setShowEditSession(false);
     }catch(e){
@@ -628,12 +636,12 @@ async function saveEditSession(){
   }
   async function removeSession(){
     if(!sel||!selSession)return;
-    const updated={...sel,sessions:sel.sessions.filter(s=>s.id!==selSession.id)};
+    const updated={...sel,sessions:coerceSessions(sel.sessions).filter(s=>s.id!==selSession.id)};
     const user=auth.currentUser;
     setIsSaving(true);
     try{
       if(user)await dataClient.writeTreatment(user.uid,updated);
-      setTreatments(treatments.map(t=>t.id!==sel.id?t:updated));
+      setTreatments(prev=>prev.map(t=>String(t.id)!==String(sel.id)?t:updated));
       setSyncError("");
       setView("detail");
       setDetailTab("sessions");
@@ -1207,7 +1215,7 @@ async function saveEditSession(){
                         .filter(pack=>pack.nextDate)
                         .sort((a,b)=>(a.nextDays??999)-(b.nextDays??999))
                         .map(t=>{
-                          const p=PALETTE[t.palette%PALETTE.length];
+                          const p=PALETTE[(t.palette||0)%PALETTE.length];
                           const d=t.nextDays;
                           const isLate=d!==null&&d<0;
                           const isToday=d===0;
@@ -1290,12 +1298,11 @@ async function saveEditSession(){
 
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
                   {openPacks.map((pack,i)=>{
-                    const p=PALETTE[pack.palette%PALETTE.length];
-                    const used=(pack.sessions||[]).length;
-                    const rem=sessionsRemaining(pack);
+                    const p=PALETTE[(pack.palette||0)%PALETTE.length];
+                    const {used,total,remaining:rem}=packSessionCounts(pack);
                     const expDays=daysUntil(pack.expiryDate);
                     const next=getNext(pack);
-                    const sortedS=[...(pack.sessions||[])].sort((a,b)=>new Date(a.date)-new Date(b.date));
+                    const sortedS=coerceSessions(pack.sessions).slice().sort((a,b)=>new Date(a.date)-new Date(b.date));
                     return(
                       <div key={pack.id} className={`tcard pop p${Math.min(i+3,5)}`} style={{padding:"22px 20px"}} onClick={()=>goToDetail(pack.id)}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
@@ -1324,7 +1331,7 @@ async function saveEditSession(){
                         <div style={{marginBottom:16}}>
                           <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>{t("sessions_tap")}</p>
                           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                            {Array.from({length:pack.totalSessions}).map((_,idx)=>{
+                            {Array.from({length:total}).map((_,idx)=>{
                               const sess=sortedS[idx];
                               const isDone=idx<used;
                               const isNext=idx===used;
@@ -1346,7 +1353,7 @@ async function saveEditSession(){
                                 </button>
                               );
                             })}
-                            <span style={{fontSize:11,color:"#9A8A78",marginLeft:4,fontWeight:500}}>{used}/{pack.totalSessions}</span>
+                            <span style={{fontSize:11,color:"#9A8A78",marginLeft:4,fontWeight:500}}>{used}/{total}</span>
                           </div>
                         </div>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
@@ -1488,7 +1495,7 @@ async function saveEditSession(){
                   </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:24}}>
-                  {[{label:"Done",val:sel.sessions.length},{label:"Left",val:sel.totalSessions-sel.sessions.length},{label:"Total",val:sel.totalSessions}].map(s=>(
+                  {[{label:"Done",val:selCounts.used},{label:"Left",val:selCounts.remaining},{label:"Total",val:selCounts.total}].map(s=>(
                     <div key={s.label} className="card" style={{padding:"14px 10px",textAlign:"center"}}>
                       <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,color:pal.accent,lineHeight:1}}>{s.val}</p>
                       <p style={{fontSize:10,color:"#9A8A78",fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginTop:4}}>{s.label}</p>
@@ -1505,7 +1512,7 @@ async function saveEditSession(){
 
                 {detailTab==="sessions"&&(
                   <div>
-                    {getNext(sel)&&sel.sessions.length<sel.totalSessions&&(()=>{
+                    {getNext(sel)&&selCounts.remaining>0&&(()=>{
                       const nextDays=daysUntil(getNext(sel));
                       const isLate=nextDays!==null&&nextDays<0;
                       return(
@@ -1546,10 +1553,10 @@ async function saveEditSession(){
                       <p style={{fontSize:14,fontWeight:600,marginBottom:4}}>Session Timeline</p>
                       <p style={{fontSize:12,color:"#9A8A78",marginBottom:20}}>Tap a completed dot to view details, tap + to log next session</p>
                       <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-start"}}>
-                        {Array.from({length:sel.totalSessions}).map((_,i)=>{
+                        {Array.from({length:selCounts.total}).map((_,i)=>{
                           const ss=sortedSessions[i];
-                          const isDone=i<sel.sessions.length;
-                          const isNext=i===sel.sessions.length;
+                          const isDone=i<selCounts.used;
+                          const isNext=i===selCounts.used;
                           return(
                             <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
                               <button
@@ -1580,10 +1587,10 @@ async function saveEditSession(){
                       </div>
                     </div>
 
-                    {sel.sessions.length<sel.totalSessions&&(
+                    {selCounts.remaining>0&&(
                       <button className="btn" style={{background:pal.accent,color:"#FFF",boxShadow:`0 8px 24px ${pal.accent}30`,marginBottom:16,fontWeight:600}}
-                        onClick={()=>{setLogTargetIdx(sel.sessions.length);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}}>
-                        + Log Session {sel.sessions.length+1}
+                        onClick={()=>{setLogTargetIdx(selCounts.used);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}}>
+                        + Log Session {selCounts.used+1}
                       </button>
                     )}
                   </div>
@@ -1753,7 +1760,7 @@ async function saveEditSession(){
             <div className="mbg" onClick={e=>{if(e.target===e.currentTarget)setShowLog(false);}}>
               <div className="msheet">
                 <div className="mhandle"/>
-                <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,marginBottom:4}}>Log Session {(logTargetIdx!==null?logTargetIdx:sel.sessions.length)+1}</h2>
+                <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,marginBottom:4}}>Log Session {(logTargetIdx!==null?logTargetIdx:selCounts.used)+1}</h2>
                 <p style={{fontSize:13,color:"#9A8A78",marginBottom:24}}>{sel.name} · {sel.clinic}</p>
                 <div style={{display:"flex",flexDirection:"column",gap:16}}>
                   <div><span className="lbl">Date of appointment</span><input className="inp" type="date" value={logForm.date} onChange={e=>setLogForm({...logForm,date:e.target.value})}/></div>

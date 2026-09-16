@@ -1,6 +1,8 @@
 import {
   daysUntil,
   sessionsRemaining,
+  sessionsUsed,
+  packSessionCounts,
   isExpiredPack,
   isOpenPack,
   isHistoryPack,
@@ -9,6 +11,10 @@ import {
   packKind,
   compareExpirySoonest,
   buildHistoryTimeline,
+  applySessionLog,
+  listOpenPacks,
+  mergeTreatmentsById,
+  coerceSessions,
 } from "./packageStatus";
 
 const NOW = new Date("2026-09-16T12:00:00");
@@ -116,6 +122,77 @@ describe("promo vs paid", () => {
     const open = [promo, paid, leftover].filter((p) => isOpenPack(p, NOW));
     expect(open).toHaveLength(3);
     expect(open.map(sessionsRemaining)).toEqual([2, 3, 1]);
+  });
+});
+
+describe("last-session log → Home vs History", () => {
+  it("removes a 1-session promo from Home immediately and keeps the other open pack", () => {
+    const paid = pack({
+      id: "paid",
+      kind: "paid",
+      totalSessions: 6,
+      expiryDate: "2026-11-01",
+      sessions: [{ id: 1, date: "2026-08-01" }],
+    });
+    const promo = pack({
+      id: "promo",
+      kind: "promo",
+      totalSessions: 1,
+      expiryDate: "2026-12-31",
+      sessions: [],
+    });
+    const after = applySessionLog([paid, promo], "promo", { id: 99, date: "2026-09-16", note: "Last visit" });
+    const home = listOpenPacks(after, NOW);
+    const history = after.filter((p) => isHistoryPack(p, NOW));
+
+    expect(home.map((p) => p.id)).toEqual(["paid"]);
+    expect(home).toHaveLength(1);
+    expect(sessionsRemaining(home[0])).toBe(5);
+    expect(sessionsUsed(home[0])).toBe(1);
+
+    expect(history.map((p) => p.id)).toEqual(["promo"]);
+    expect(sessionsRemaining(history[0])).toBe(0);
+    expect(sessionsUsed(history[0])).toBe(1);
+    expect(packKind(history[0])).toBe("promo");
+    expect(packKind(home[0])).toBe("paid");
+  });
+
+  it("keeps LEFT and used/total on the same source of truth after the last log", () => {
+    const promo = pack({ id: "promo", kind: "promo", totalSessions: 1, sessions: [] });
+    const after = applySessionLog([promo], "promo", { id: 1, date: "2026-09-16" });
+    const counts = packSessionCounts(after[0]);
+    expect(counts).toEqual({ used: 1, total: 1, remaining: 0 });
+    expect(counts.remaining).toBe(counts.total - counts.used);
+    expect(isOpenPack(after[0], NOW)).toBe(false);
+    expect(isHistoryPack(after[0], NOW)).toBe(true);
+  });
+
+  it("counts Firestore map-shaped sessions so a used-up pack cannot stay on Home with 1 LEFT", () => {
+    const usedUpMap = pack({
+      totalSessions: 1,
+      sessions: { 0: { id: 1, date: "2026-09-16" } },
+    });
+    expect(Array.isArray(usedUpMap.sessions)).toBe(false);
+    expect(coerceSessions(usedUpMap.sessions)).toHaveLength(1);
+    expect(packSessionCounts(usedUpMap)).toEqual({ used: 1, total: 1, remaining: 0 });
+    expect(isOpenPack(usedUpMap, NOW)).toBe(false);
+    expect(isHistoryPack(usedUpMap, NOW)).toBe(true);
+    expect(listOpenPacks([usedUpMap], NOW)).toEqual([]);
+  });
+
+  it("does not let a stale unused snapshot revive a used-up pack or drop another open pack", () => {
+    const paid = pack({ id: 10, totalSessions: 4, sessions: [] });
+    const promoUsed = pack({
+      id: 20,
+      kind: "promo",
+      totalSessions: 1,
+      sessions: [{ id: 1, date: "2026-09-16" }],
+    });
+    const staleLoaded = [pack({ id: 20, kind: "promo", totalSessions: 1, sessions: [] })];
+    const merged = mergeTreatmentsById([paid, promoUsed], staleLoaded);
+    expect(listOpenPacks(merged, NOW).map((p) => p.id)).toEqual([10]);
+    expect(merged.filter((p) => isHistoryPack(p, NOW)).map((p) => p.id)).toEqual([20]);
+    expect(packSessionCounts(merged.find((p) => p.id === 20)).remaining).toBe(0);
   });
 });
 
