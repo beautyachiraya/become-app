@@ -3,6 +3,8 @@ import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDo
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import { createDataClient, formatWriteError } from "./userData";
+import { expiryDaysForPack } from "./packageExpiry";
+import { remainingSessions, packSource, splitPackages, flattenCompletedSessions, sortClosedPackages, closedPackageReason, lastSessionDate } from "./packageHistory";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
 
@@ -56,17 +58,19 @@ const FREQUENCIES = [
   {label:"Every 2 months",days:60},{label:"Every 3 months",days:90},
   {label:"Every 6 months",days:180},{label:"Custom",days:null},
 ];
-const LANGUAGES = ["English","Thai — ภาษาไทย"];  const T = {   en: {     until_treatment: "Until my treatment",     my_treatments: "My treatments",     add_new: "+ Add new",     add_new_treatment: "+ Add New Treatment",     empty_title: "Your becoming starts here.",     empty_sub: "Add your first treatment to begin",     empty_first_package: "Add your first package",     add_treatment: "Add Treatment",     needs_attention: "Needs attention",     sessions_tap: "Sessions — tap to view or log",   },   th: {     until_treatment: "อีกนิดก็ถึงเวลาแล้ว",     my_treatments: "ทรีทเมนต์ของฉัน",     add_new: "+ เพิ่มรายการ",     add_new_treatment: "+ เพิ่มทรีทเมนต์ใหม่",     empty_title: "เริ่มต้นการดูแลตัวเองได้เลยนะคะ",     empty_sub: "เพิ่มทรีทเมนต์แรกของคุณได้เลย",     empty_first_package: "เพิ่มแพ็กเกจแรกของคุณ",     add_treatment: "เพิ่มทรีทเมนต์",     needs_attention: "มีรายการที่ต้องดูแล",     sessions_tap: "แตะเพื่อดูหรือบันทึกเซสชัน",   } };
+const LANGUAGES = ["English","Thai — ภาษาไทย"];  const T = {   en: {     until_treatment: "Until my treatment",     my_treatments: "My treatments",     add_new: "+ Add new",     add_new_treatment: "+ Add New Treatment",     empty_title: "Your becoming starts here.",     empty_sub: "Add your first treatment to begin",     empty_first_package: "Add your first package",     add_treatment: "Add Treatment",     needs_attention: "Needs attention",     sessions_tap: "Sessions — tap to view or log",     history: "History",     history_sub: "Logged sessions and packages that are used up or expired",     history_empty_title: "Your past becoming.",     history_empty_sub: "Logged sessions and packages you've used up or that have expired will gather here.",     completed_sessions: "Completed sessions",     closed_packages: "Closed packages",     used_up: "Used up",     expired: "Expired",     promo: "Promo",     paid: "Paid",     open_empty_title: "No open packages",     open_empty_sub: "Used-up and expired packages live in History. Add a new package to keep tracking.",     view_history: "View History",     package_type: "Package type (optional)",     source_not_set: "Not set",   },   th: {     until_treatment: "อีกนิดก็ถึงเวลาแล้ว",     my_treatments: "ทรีทเมนต์ของฉัน",     add_new: "+ เพิ่มรายการ",     add_new_treatment: "+ เพิ่มทรีทเมนต์ใหม่",     empty_title: "เริ่มต้นการดูแลตัวเองได้เลยนะคะ",     empty_sub: "เพิ่มทรีทเมนต์แรกของคุณได้เลย",     empty_first_package: "เพิ่มแพ็กเกจแรกของคุณ",     add_treatment: "เพิ่มทรีทเมนต์",     needs_attention: "มีรายการที่ต้องดูแล",     sessions_tap: "แตะเพื่อดูหรือบันทึกเซสชัน",     history: "History",     history_sub: "เซสชันที่บันทึกแล้ว และแพ็กเกจที่ใช้หมดหรือหมดอายุ",     history_empty_title: "เรื่องราวที่ผ่านมา",     history_empty_sub: "เซสชันที่บันทึกแล้วและแพ็กเกจที่ใช้หมดหรือหมดอายุจะมาอยู่ที่นี่",     completed_sessions: "เซสชันที่เสร็จแล้ว",     closed_packages: "แพ็กเกจที่ปิดแล้ว",     used_up: "ใช้ครบแล้ว",     expired: "หมดอายุ",     promo: "โปรโมชัน",     paid: "ชำระแล้ว",     open_empty_title: "ไม่มีแพ็กเกจที่เปิดอยู่",     open_empty_sub: "แพ็กเกจที่ใช้หมดหรือหมดอายุย้ายไปที่ History แล้ว เพิ่มแพ็กเกจใหม่เพื่อติดตามต่อได้เลย",     view_history: "ดู History",     package_type: "ประเภทแพ็กเกจ (ไม่บังคับ)",     source_not_set: "ไม่ระบุ",   } };
 const CURRENCIES = ["THB — Thai Baht ฿","USD — US Dollar $","AED — UAE Dirham د.إ"];
 const COUNTRY_CODES = ["+66 TH","+1 US","+44 UK","+65 SG","+81 JP","+82 KR","+86 CN","+33 FR","+971 AE"];
 
-const SAMPLE_DATA = [
-  {id:1,name:"Laser Hair Removal",clinic:"Glow Clinic Bangkok",totalSessions:8,frequency:42,frequencyLabel:"Every 6 weeks",expiryDate:"2026-12-31",palette:0,notes:"Full legs",
-    sessions:[{id:1,date:"2026-01-15",note:"First session, mild redness after",photo:null},{id:2,date:"2026-02-26",note:"Noticeably less hair growth!",photo:null},{id:3,date:"2026-03-08",note:"Smoother skin already",photo:null}]},
-  {id:2,name:"Botox",clinic:"Aesthetic Studio",totalSessions:3,frequency:90,frequencyLabel:"Every 3 months",expiryDate:"2025-09-30",palette:1,notes:"Forehead & crow's feet",
-    sessions:[{id:1,date:"2025-12-01",note:"20 units, love the result",photo:null}]},
-  {id:3,name:"Hydrafacial",clinic:"Pure Skin Spa",totalSessions:6,frequency:30,frequencyLabel:"Monthly",expiryDate:"2026-11-01",palette:2,notes:"Diamond glow add-on",
-    sessions:[{id:1,date:"2026-01-10",note:"Skin feels incredible",photo:null},{id:2,date:"2026-02-10",note:"Added vitamin C booster",photo:null},{id:3,date:"2026-03-10",note:"Best skin of my life!",photo:null}]},
+export const SAMPLE_DATA = [
+  {id:1,packageId:1,name:"Laser Hair Removal",clinic:"Glow Clinic Bangkok",totalSessions:8,frequency:42,frequencyLabel:"Every 6 weeks",expiryDate:"2026-12-31",palette:0,notes:"Full legs",source:"paid",
+    sessions:[{id:1,date:"2026-01-15",note:"First session, mild redness after",photo:null,packageId:1},{id:2,date:"2026-02-26",note:"Noticeably less hair growth!",photo:null,packageId:1},{id:3,date:"2026-03-08",note:"Smoother skin already",photo:null,packageId:1}]},
+  {id:2,packageId:2,name:"Botox",clinic:"Aesthetic Studio",totalSessions:3,frequency:90,frequencyLabel:"Every 3 months",expiryDate:"2025-09-30",palette:1,notes:"Forehead & crow's feet",source:"paid",
+    sessions:[{id:1,date:"2025-12-01",note:"20 units, love the result",photo:null,packageId:2}]},
+  {id:3,packageId:3,name:"Hydrafacial",clinic:"Pure Skin Spa",totalSessions:6,frequency:30,frequencyLabel:"Monthly",expiryDate:"2026-11-01",palette:2,notes:"Diamond glow add-on",source:"promo",
+    sessions:[{id:1,date:"2026-01-10",note:"Skin feels incredible",photo:null,packageId:3},{id:2,date:"2026-02-10",note:"Added vitamin C booster",photo:null,packageId:3},{id:3,date:"2026-03-10",note:"Best skin of my life!",photo:null,packageId:3}]},
+  {id:4,packageId:4,name:"Chemical Peel",clinic:"Pure Skin Spa",totalSessions:4,frequency:30,frequencyLabel:"Monthly",expiryDate:"2026-08-01",palette:4,notes:"Used-up promo pack",source:"promo",
+    sessions:[{id:1,date:"2026-04-01",note:"First peel",photo:null,packageId:4},{id:2,date:"2026-05-01",note:"",photo:null,packageId:4},{id:3,date:"2026-06-01",note:"",photo:null,packageId:4},{id:4,date:"2026-07-01",note:"Last session",photo:null,packageId:4}]},
 ];
 
 // ─── HELPERS ─────────────────────────────────────────────────────
@@ -76,6 +80,17 @@ function daysUntil(d){if(!d)return null;const t=new Date();t.setHours(0,0,0,0);r
 function addDays(d,n){if(!d)return null;const dt=new Date(d);dt.setDate(dt.getDate()+n);return dt.toISOString().split("T")[0];}
 function getNext(t){if(!t.sessions.length)return null;const last=[...t.sessions].sort((a,b)=>new Date(b.date)-new Date(a.date))[0];return addDays(last.date,t.frequency);}
 function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";}
+function SourceBadge({source}){
+  if(!source)return null;
+  const promo=source==="promo";
+  return <span className={promo?"pill pill-promo":"pill pill-ok"}>{promo?"Promo":"Paid"}</span>;
+}
+function closedReasonCopy(reason, tx){
+  if(reason==="used_up_expired")return tx("used_up")+" · "+tx("expired");
+  if(reason==="used_up")return tx("used_up");
+  if(reason==="expired")return tx("expired");
+  return "";
+}
 
 // Mock OAuth overlay — no longer opened by Sign in / Sign up.
 // Google uses Firebase popup; Facebook is not wired, so that CTA is hidden.
@@ -229,8 +244,8 @@ function PolicyModal({title, sections, onClose, onAccept, acceptLabel}){
 }
 
 // ─── MAIN ─────────────────────────────────────────────────────────
-export default function Become(){
-  const [authScreen,setAuthScreen]=useState("login");
+export default function Become({initialAuthScreen="login", initialTreatments, initialTab="home"}={}){
+  const [authScreen,setAuthScreen]=useState(initialAuthScreen);
   const [oauthProvider,setOauthProvider]=useState(null);
   const [otpMethod,setOtpMethod]=useState("email");
   const [otpContact,setOtpContact]=useState("");
@@ -250,8 +265,8 @@ export default function Become(){
   const oR0=useRef(),oR1=useRef(),oR2=useRef(),oR3=useRef(),oR4=useRef();
   const otpRefs=[oR0,oR1,oR2,oR3,oR4];
 
-  const [treatments,setTreatments]=useState([]);
-  const [appTab,setAppTab]=useState("home");
+  const [treatments,setTreatments]=useState(()=>Array.isArray(initialTreatments)?initialTreatments:[]);
+  const [appTab,setAppTab]=useState(initialTab);
   const [view,setView]=useState("home");
   const [selectedId,setSelectedId]=useState(null);
   const [sessionIdx,setSessionIdx]=useState(null);
@@ -277,7 +292,7 @@ export default function Become(){
   const [showTerms,setShowTerms]=useState(false);
   const [privacyAccepted,setPrivacyAccepted]=useState(false);
   const [termsAccepted,setTermsAccepted]=useState(false);
-  const [form,setForm]=useState({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:""});
+  const [form,setForm]=useState({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:"",source:""});
   const [logForm,setLogForm]=useState({date:new Date().toISOString().split("T")[0],note:"",photo:null});
   const [syncError,setSyncError]=useState("");
   const [isSaving,setIsSaving]=useState(false);
@@ -312,10 +327,13 @@ export default function Become(){
     });
     return()=>{cancelled=true;};
   },[authScreen]);
-  const urgent=useMemo(()=>treatments.filter(t=>{
-    const e=daysUntil(t.expiryDate),r=t.totalSessions-t.sessions.length;
-    return(e!==null&&e<=30&&e>=0)||r===0;
-  }),[treatments]);
+  const {open:openPackages, closed:historyPackagesUnsorted}=useMemo(()=>splitPackages(treatments),[treatments]);
+  const historyPackages=useMemo(()=>sortClosedPackages(historyPackagesUnsorted),[historyPackagesUnsorted]);
+  const historySessions=useMemo(()=>flattenCompletedSessions(treatments),[treatments]);
+  const urgent=useMemo(()=>openPackages.filter(pkg=>{
+    const e=daysUntil(pkg.expiryDate);
+    return e!==null&&e<=30&&e>=0;
+  }),[openPackages]);
 
 
   function handleOtpInput(val,i){
@@ -433,8 +451,8 @@ async function logSession(){
       }else if(logForm.photo){
         photoURL=logForm.photo;
       }
-      const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:photoURL};
-      const updatedT={...current,sessions:[...current.sessions,newSession]};
+      const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:photoURL,packageId:current.packageId||current.id};
+      const updatedT={...current,sessions:[...current.sessions,newSession],packageId:current.packageId||current.id};
       if(user)await dataClient.writeTreatment(user.uid,updatedT);
       setTreatments(treatments.map(t=>String(t.id)===String(selectedId)?updatedT:t));
       setSyncError("");
@@ -457,7 +475,14 @@ async function logSession(){
   async function addTreatment(){
     const n=form.name==="Other"?form.customName:form.name;
     const freq=form.frequencyLabel==="Custom"?parseInt(form.customDays):form.frequency;
-    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,sessions:[]};
+    const source=form.source||"";
+    let expiryDate=form.expiryDate;
+    if(!expiryDate&&source){
+      expiryDate=addDays(new Date().toISOString().split("T")[0],expiryDaysForPack(source));
+    }
+    const id=Date.now();
+    const newT={id,packageId:id,name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,sessions:[]};
+    if(source)newT.source=source;
     const user=auth.currentUser;
     setIsSaving(true);
     try{
@@ -465,7 +490,8 @@ async function logSession(){
       setTreatments([...treatments,newT]);
       setSyncError("");
       setShowAdd(false);
-      setForm({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:""});
+      setAppTab("home");
+      setForm({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:"",source:""});
     }catch(e){
       showWriteError("Couldn't save your treatment", e);
     }finally{
@@ -487,11 +513,11 @@ async function logSession(){
     }
   }
   function goToDetail(id){setSelectedId(id);setDetailTab("sessions");setView("detail");}
-  function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||""});setShowEdit(true);}
+  function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||"",source:t.source||""});setShowEdit(true);}
 async function saveEdit(){
     if(!editForm||!sel)return;
     const freq=editForm.frequencyLabel==="Custom"?parseInt(editForm.customDays):editForm.frequency;
-    const updatedT={...sel,name:editForm.name,clinic:editForm.clinic,brandUnit:editForm.brandUnit,totalSessions:parseInt(editForm.totalSessions),frequency:freq,frequencyLabel:editForm.frequencyLabel,expiryDate:editForm.expiryDate,notes:editForm.notes};
+    const updatedT={...sel,name:editForm.name,clinic:editForm.clinic,brandUnit:editForm.brandUnit,totalSessions:parseInt(editForm.totalSessions),frequency:freq,frequencyLabel:editForm.frequencyLabel,expiryDate:editForm.expiryDate,notes:editForm.notes,packageId:sel.packageId||sel.id,source:editForm.source||""};
     const user=auth.currentUser;
     setIsSaving(true);
     try{
@@ -614,11 +640,12 @@ async function saveEditSession(){
     .pill-c{background:rgba(180,145,95,0.1);color:#8C6E40;border:1px solid rgba(180,145,95,0.18);}
     .pill-danger{background:#FAEAEA;color:#C05858;}
     .pill-late{background:#F5E6F0;color:#A0407A;border:1px solid rgba(160,64,122,0.2);}
+    .pill-promo{background:#FDF0F2;color:#A04058;border:1px solid rgba(212,120,138,0.25);}
     .mbg{position:fixed;inset:0;background:rgba(28,22,18,0.45);backdrop-filter:blur(8px);z-index:200;display:flex;align-items:flex-end;justify-content:center;}
     .msheet{background:#FAF7F2;border-radius:28px 28px 0 0;padding:12px 24px 52px;width:100%;max-width:430px;max-height:90vh;overflow-y:auto;animation:slideUp 0.32s cubic-bezier(0.16,1,0.3,1);}
     .mhandle{width:36px;height:4px;border-radius:2px;background:#EDE5D8;margin:0 auto 24px;}
     .nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:rgba(250,247,242,0.97);backdrop-filter:blur(20px);border-top:1px solid rgba(180,145,95,0.1);padding:10px 0 26px;display:flex;justify-content:space-around;align-items:center;z-index:100;}
-    .nbtn{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 20px;border-radius:12px;transition:background 0.15s;}
+    .nbtn{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 10px;border-radius:12px;transition:background 0.15s;min-width:56px;}
     .nbtn:hover{background:#F5EFE6;}
     .nbtn.on{background:rgba(180,145,95,0.1);}
     .back{background:#F5EFE6;border:none;border-radius:50px;padding:8px 16px 8px 12px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:#7A6A58;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;}
@@ -1077,16 +1104,16 @@ async function saveEditSession(){
                   <div className="pop p2" style={{marginBottom:20}}>
                     <div style={{background:"#FEF5E4",borderRadius:20,padding:"18px 20px",border:"1px solid rgba(200,144,64,0.2)"}}>
                       <p style={{fontSize:10,fontWeight:600,color:"#C89040",letterSpacing:2,textTransform:"uppercase",marginBottom:12}}>Needs attention</p>
-                      {urgent.map((t,i)=>{
-                        const e=daysUntil(t.expiryDate),r=t.totalSessions-t.sessions.length;
+                      {urgent.map((pkg,i)=>{
+                        const e=daysUntil(pkg.expiryDate);
                         return(
-                          <div key={t.id} onClick={()=>goToDetail(t.id)}
+                          <div key={pkg.id} onClick={()=>goToDetail(pkg.id)}
                             style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderTop:i>0?"1px solid rgba(200,144,64,0.12)":"none",cursor:"pointer"}}>
                             <div>
-                              <p style={{fontSize:14,fontWeight:600}}>{t.name}</p>
-                              <p style={{fontSize:12,color:"#9A8A78"}}>{t.clinic}</p>
+                              <p style={{fontSize:14,fontWeight:600}}>{pkg.name}</p>
+                              <p style={{fontSize:12,color:"#9A8A78"}}>{pkg.clinic}</p>
                             </div>
-                            <span className="pill pill-warn">{r===0?"All used":`${e}d left`}</span>
+                            <span className="pill pill-warn">{e}d left</span>
                           </div>
                         );
                       })}
@@ -1096,13 +1123,13 @@ async function saveEditSession(){
 
 
                 {/* Until My Treatment */}
-                {treatments.some(t=>getNext(t)&&t.sessions.length<t.totalSessions)&&(
+                {openPackages.some(pkg=>getNext(pkg)&&pkg.sessions.length<pkg.totalSessions)&&(
                   <div className="pop p4" style={{marginBottom:20}}>
                     <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase",marginBottom:14,paddingLeft:4}}>{t("until_treatment")}</p>
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                      {treatments
-                        .map(t=>({...t,nextDate:getNext(t),nextDays:daysUntil(getNext(t))}))
-                        .filter(t=>t.nextDate&&t.sessions.length<t.totalSessions)
+                      {openPackages
+                        .map(pkg=>({...pkg,nextDate:getNext(pkg),nextDays:daysUntil(getNext(pkg))}))
+                        .filter(pkg=>pkg.nextDate&&pkg.sessions.length<pkg.totalSessions)
                         .sort((a,b)=>(a.nextDays??999)-(b.nextDays??999))
                         .map(t=>{
                           const p=PALETTE[t.palette%PALETTE.length];
@@ -1186,36 +1213,46 @@ async function saveEditSession(){
                   </div>
                 )}
 
+                {treatments.length>0&&openPackages.length===0&&(
+                  <div className="card" style={{padding:"40px 24px",textAlign:"center",marginBottom:14}}>
+                    <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:300,color:"#9A8A78",fontStyle:"italic",marginBottom:8}}>{t("open_empty_title")}</p>
+                    <p style={{fontSize:13,color:"#C4B8A8",marginBottom:24,lineHeight:1.6}}>{t("open_empty_sub")}</p>
+                    <button className="btn btn-g" style={{width:"auto",padding:"12px 28px",marginBottom:10}} onClick={()=>setAppTab("history")}>{t("view_history")}</button>
+                    <button className="btn btn-c" style={{width:"auto",padding:"12px 28px"}} onClick={()=>setShowAdd(true)}>{t("add_treatment")}</button>
+                  </div>
+                )}
+
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
-                  {treatments.map((t,i)=>{
-                    const p=PALETTE[t.palette%PALETTE.length];
-                    const used=t.sessions.length;
-                    const rem=t.totalSessions-used;
-                    const expDays=daysUntil(t.expiryDate);
-                    const isExpired=expDays!==null&&expDays<0;
-                    const next=getNext(t);
-                    const sortedS=[...t.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
+                  {openPackages.map((pkg,i)=>{
+                    const p=PALETTE[pkg.palette%PALETTE.length];
+                    const used=(pkg.sessions||[]).length;
+                    const rem=remainingSessions(pkg);
+                    const expDays=daysUntil(pkg.expiryDate);
+                    const next=getNext(pkg);
+                    const sortedS=[...(pkg.sessions||[])].sort((a,b)=>new Date(a.date)-new Date(b.date));
+                    const src=packSource(pkg);
                     return(
-                      <div key={t.id} className={`tcard pop p${Math.min(i+3,5)}`} style={{padding:"22px 20px"}} onClick={()=>goToDetail(t.id)}>
+                      <div key={pkg.id} className={`tcard pop p${Math.min(i+3,5)}`} style={{padding:"22px 20px"}} onClick={()=>goToDetail(pkg.id)}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
                           <div style={{display:"flex",gap:12,alignItems:"flex-start",flex:1}}>
                             <div style={{width:44,height:44,borderRadius:13,background:p.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20,color:p.accent}}>
-                              {TREATMENT_ICONS[t.name]||"✧"}
+                              {TREATMENT_ICONS[pkg.name]||"✧"}
                             </div>
                             <div style={{flex:1}}>
-                              <p style={{fontSize:15,fontWeight:600,marginBottom:2}}>{t.name}</p>
-                              <p style={{fontSize:12,color:"#9A8A78"}}>{t.clinic}</p>
-                              {t.brandUnit&&<p style={{fontSize:11,color:"#B4915F",fontWeight:500,marginTop:2}}>{t.brandUnit}</p>}{t.notes&&<p style={{fontSize:11,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{t.notes}</p>}
+                              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:2}}>
+                                <p style={{fontSize:15,fontWeight:600,margin:0}}>{pkg.name}</p>
+                                <SourceBadge source={src}/>
+                              </div>
+                              <p style={{fontSize:12,color:"#9A8A78"}}>{pkg.clinic}</p>
+                              {pkg.brandUnit&&<p style={{fontSize:11,color:"#B4915F",fontWeight:500,marginTop:2}}>{pkg.brandUnit}</p>}{pkg.notes&&<p style={{fontSize:11,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{pkg.notes}</p>}
                             </div>
                           </div>
                           <div style={{textAlign:"right",marginLeft:12,display:"flex",flexDirection:"column",alignItems:"flex-end"}}>
                             <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:40,fontWeight:400,color:p.accent,lineHeight:1}}>{rem}</p>
                             <p style={{fontSize:9,color:"#C4B8A8",fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>left</p>
-                            {isExpired
-                              ? <span style={{fontSize:11,fontWeight:700,color:"#C05858",background:"#FAEAEA",padding:"3px 10px",borderRadius:20}}>Expired</span>
-                              : t.expiryDate
-                                ? <span style={{fontSize:11,color:"#9A8A78"}}>Exp {fmtShort(t.expiryDate)}</span>
-                                : null
+                            {pkg.expiryDate
+                              ? <span style={{fontSize:11,color:"#9A8A78"}}>Exp {fmtShort(pkg.expiryDate)}</span>
+                              : null
                             }
                           </div>
                         </div>
@@ -1223,12 +1260,12 @@ async function saveEditSession(){
                         <div style={{marginBottom:16}}>
                           <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>Sessions — tap to view or log</p>
                           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                            {Array.from({length:t.totalSessions}).map((_,idx)=>{
+                            {Array.from({length:pkg.totalSessions}).map((_,idx)=>{
                               const sess=sortedS[idx];
                               const isDone=idx<used;
                               const isNext=idx===used;
                               return(
-                                <button key={idx} onClick={e=>{e.stopPropagation();openDot(t.id,idx,sess);}}
+                                <button key={idx} onClick={e=>{e.stopPropagation();openDot(pkg.id,idx,sess);}}
                                   style={{width:isDone?34:isNext?28:22,height:isDone?34:isNext?28:22,borderRadius:"50%",
                                     border:isDone?"none":isNext?`2px dashed ${p.accent}`:`1.5px dashed ${p.accent}30`,
                                     background:isDone?`linear-gradient(135deg,${p.soft},${p.accent})`:isNext?`${p.accent}0D`:"transparent",
@@ -1245,22 +1282,114 @@ async function saveEditSession(){
                                 </button>
                               );
                             })}
-                            <span style={{fontSize:11,color:"#9A8A78",marginLeft:4,fontWeight:500}}>{used}/{t.totalSessions}</span>
+                            <span style={{fontSize:11,color:"#9A8A78",marginLeft:4,fontWeight:500}}>{used}/{pkg.totalSessions}</span>
                           </div>
                         </div>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                           {next&&rem>0&&daysUntil(next)>=0&&<span className="pill pill-ok">Next {fmtShort(next)}</span>}
                           {next&&rem>0&&daysUntil(next)<0&&<span className="pill pill-late">Late · {Math.abs(daysUntil(next))}d overdue</span>}
                           {expDays!==null&&expDays>=0&&expDays<=30&&<span className="pill pill-warn">Exp in {expDays}d</span>}
-                          {rem===0&&<span className="pill pill-done">Complete</span>}
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                {treatments.length>0&&(
+                {openPackages.length>0&&(
                   <button className="btn btn-c" style={{marginTop:20,marginBottom:4}} onClick={()=>setShowAdd(true)}>{t("add_new_treatment")}</button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* HISTORY */}
+          {appTab==="history"&&view==="home"&&(
+            <div style={{paddingBottom:100}}>
+              <div style={{background:"linear-gradient(160deg,#EDE5D8,#F5EFE6,#FAF7F2)",padding:"calc(60px + env(safe-area-inset-top)) 24px 28px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.12)"}}>
+                <p style={{fontSize:11,color:"#B4915F",fontWeight:600,letterSpacing:2.5,textTransform:"uppercase",marginBottom:10}}>Diary</p>
+                <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:40,fontWeight:300,lineHeight:1.1}}>{t("history")}</h1>
+                <p style={{fontSize:13,color:"#9A8A78",marginTop:8,lineHeight:1.55,maxWidth:320}}>{t("history_sub")}</p>
+              </div>
+              <div style={{padding:"20px 20px 0"}}>
+                {historySessions.length===0&&historyPackages.length===0?(
+                  <div className="card" style={{padding:"52px 24px",textAlign:"center"}}>
+                    <div style={{width:52,height:52,borderRadius:14,background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(180,145,95,0.24)"}}>
+                      <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,color:"#FAF7F2",fontStyle:"italic",fontWeight:300}}>b</span>
+                    </div>
+                    <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:300,color:"#9A8A78",fontStyle:"italic",marginBottom:8}}>{t("history_empty_title")}</p>
+                    <p style={{fontSize:13,color:"#C4B8A8",lineHeight:1.6}}>{t("history_empty_sub")}</p>
+                  </div>
+                ):(
+                  <>
+                    {historySessions.length>0&&(
+                      <div style={{marginBottom:28}}>
+                        <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase",marginBottom:14,paddingLeft:4}}>{t("completed_sessions")}</p>
+                        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                          {historySessions.map(item=>{
+                            const src=item.source;
+                            return(
+                              <div key={item.id} className="card" style={{padding:"16px 18px",cursor:"pointer"}}
+                                onClick={()=>{
+                                  const pkg=item.package;
+                                  const sorted=[...(pkg.sessions||[])].sort((a,b)=>new Date(a.date)-new Date(b.date));
+                                  const idx=sorted.findIndex(s=>s.id===item.sessionId);
+                                  setSelectedId(pkg.id);
+                                  setSessionIdx(idx<0?0:idx);
+                                  setView("session");
+                                }}>
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+                                  <div style={{flex:1,minWidth:0}}>
+                                    <p style={{fontSize:14,fontWeight:600,marginBottom:2}}>{item.treatmentName}</p>
+                                    <p style={{fontSize:12,color:"#9A8A78"}}>{item.clinic}</p>
+                                    {item.note?<p style={{fontSize:12,color:"#C4B8A8",fontStyle:"italic",marginTop:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.note}</p>:null}
+                                  </div>
+                                  <div style={{textAlign:"right",flexShrink:0,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+                                    <p style={{fontSize:12,fontWeight:600}}>{fmtShort(item.date)}</p>
+                                    <SourceBadge source={src}/>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {historyPackages.length>0&&(
+                      <div style={{marginBottom:12}}>
+                        <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase",marginBottom:14,paddingLeft:4}}>{t("closed_packages")}</p>
+                        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                          {historyPackages.map(pkg=>{
+                            const p=PALETTE[(pkg.palette||0)%PALETTE.length];
+                            const reason=closedPackageReason(pkg);
+                            const src=packSource(pkg);
+                            const last=lastSessionDate(pkg);
+                            const leftover=remainingSessions(pkg);
+                            return(
+                              <div key={pkg.id} className="tcard" style={{padding:"18px 18px"}} onClick={()=>goToDetail(pkg.id)}>
+                                <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                                  <div style={{width:40,height:40,borderRadius:12,background:p.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:18,color:p.accent}}>
+                                    {TREATMENT_ICONS[pkg.name]||"✧"}
+                                  </div>
+                                  <div style={{flex:1,minWidth:0}}>
+                                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:2}}>
+                                      <p style={{fontSize:15,fontWeight:600,margin:0}}>{pkg.name}</p>
+                                      <SourceBadge source={src}/>
+                                    </div>
+                                    <p style={{fontSize:12,color:"#9A8A78"}}>{pkg.clinic}</p>
+                                    <p style={{fontSize:12,color:"#C4B8A8",marginTop:6}}>
+                                      {last?"Last visit "+fmtShort(last):pkg.expiryDate?"Exp "+fmtShort(pkg.expiryDate):""}
+                                      {leftover>0?" · "+leftover+" unused":""}
+                                    </p>
+                                  </div>
+                                  <span className={reason&&reason.indexOf("expired")>=0?"pill pill-danger":"pill pill-done"}>{closedReasonCopy(reason,t)}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1286,12 +1415,15 @@ async function saveEditSession(){
                   </div>
                   <div>
                     <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,lineHeight:1.1}}>{sel.name}</h2>
-                    <p style={{fontSize:13,color:"#9A8A78",marginTop:4}}>{sel.clinic}</p>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:4}}>
+                      <p style={{fontSize:13,color:"#9A8A78"}}>{sel.clinic}</p>
+                      <SourceBadge source={packSource(sel)}/>
+                    </div>
                     {sel.brandUnit&&<p style={{fontSize:12,color:"#B4915F",fontWeight:500,marginTop:2}}>{sel.brandUnit}</p>}{sel.notes&&<p style={{fontSize:12,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{sel.notes}</p>}
                   </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:24}}>
-                  {[{label:"Done",val:sel.sessions.length},{label:"Left",val:sel.totalSessions-sel.sessions.length},{label:"Total",val:sel.totalSessions}].map(s=>(
+                  {[{label:"Done",val:sel.sessions.length},{label:"Left",val:remainingSessions(sel)},{label:"Total",val:sel.totalSessions}].map(s=>(
                     <div key={s.label} className="card" style={{padding:"14px 10px",textAlign:"center"}}>
                       <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,color:pal.accent,lineHeight:1}}>{s.val}</p>
                       <p style={{fontSize:10,color:"#9A8A78",fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginTop:4}}>{s.label}</p>
@@ -1533,6 +1665,17 @@ async function saveEditSession(){
                   {form.name==="Other"&&<div><span className="lbl">Treatment name</span><input className="inp" placeholder="e.g. Sculptra" value={form.customName} onChange={e=>setForm({...form,customName:e.target.value})}/></div>}
                   <div><span className="lbl">Clinic / Provider</span><input className="inp" placeholder="e.g. Glow Clinic Bangkok" value={form.clinic} onChange={e=>setForm({...form,clinic:e.target.value})}/></div>
                   <div><span className="lbl">Brand, Unit or cc (optional)</span><input className="inp" placeholder="e.g. Botox 20 units · Juvederm 1cc" value={form.brandUnit} onChange={e=>setForm({...form,brandUnit:e.target.value})}/></div>
+                  <div><span className="lbl">{t("package_type")}</span>
+                    <div style={{display:"flex",gap:8}}>
+                      {[{v:"",l:t("source_not_set")},{v:"promo",l:t("promo")},{v:"paid",l:t("paid")}].map(opt=>(
+                        <button type="button" key={opt.v||"none"} onClick={()=>setForm({...form,source:opt.v})}
+                          style={{flex:1,padding:"10px 8px",borderRadius:12,border:form.source===opt.v?"1.5px solid #B4915F":"1.5px solid #EDE5D8",background:form.source===opt.v?"rgba(180,145,95,0.1)":"#FAF7F2",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:form.source===opt.v?600:500,color:form.source===opt.v?"#8C6E40":"#7A6A58",cursor:"pointer"}}>
+                          {opt.l}
+                        </button>
+                      ))}
+                    </div>
+                    {form.source?<p style={{fontSize:12,color:"#9A8A78",marginTop:8,lineHeight:1.5}}>If you don't set an expiry, {form.source==="promo"?"promo":"paid"} packs are typically {expiryDaysForPack(form.source)} days.</p>:null}
+                  </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                     <div><span className="lbl">Total sessions</span><input className="inp" type="number" min="1" placeholder="e.g. 6" value={form.totalSessions} onChange={e=>setForm({...form,totalSessions:e.target.value})}/></div>
                     <div><span className="lbl">Expiry date</span><input className="inp" type="date" value={form.expiryDate} onChange={e=>setForm({...form,expiryDate:e.target.value})}/></div>
@@ -1676,6 +1819,16 @@ async function saveEditSession(){
                   <div><span className="lbl">Brand, Unit or cc (optional)</span>
                     <input className="inp" placeholder="e.g. Botox 20 units · Juvederm 1cc" value={editForm.brandUnit} onChange={e=>setEditForm({...editForm,brandUnit:e.target.value})}/>
                   </div>
+                  <div><span className="lbl">{t("package_type")}</span>
+                    <div style={{display:"flex",gap:8}}>
+                      {[{v:"",l:t("source_not_set")},{v:"promo",l:t("promo")},{v:"paid",l:t("paid")}].map(opt=>(
+                        <button type="button" key={opt.v||"none"} onClick={()=>setEditForm({...editForm,source:opt.v})}
+                          style={{flex:1,padding:"10px 8px",borderRadius:12,border:editForm.source===opt.v?"1.5px solid #B4915F":"1.5px solid #EDE5D8",background:editForm.source===opt.v?"rgba(180,145,95,0.1)":"#FAF7F2",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:editForm.source===opt.v?600:500,color:editForm.source===opt.v?"#8C6E40":"#7A6A58",cursor:"pointer"}}>
+                          {opt.l}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                     <div><span className="lbl">Total sessions</span>
                       <input className="inp" type="number" min="1" placeholder="e.g. 6" value={editForm.totalSessions} onChange={e=>setEditForm({...editForm,totalSessions:e.target.value})}/>
@@ -1768,6 +1921,12 @@ async function saveEditSession(){
                   <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22" fill="none"/>
                 </svg>
                 <span style={{fontSize:10,fontWeight:600,color:appTab==="home"?"#B4915F":"#C4B8A8"}}>Home</span>
+              </button>
+              <button className={`nbtn ${appTab==="history"?"on":""}`} onClick={()=>{setAppTab("history");setView("home");}}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={appTab==="history"?"#B4915F":"#C4B8A8"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span style={{fontSize:10,fontWeight:600,color:appTab==="history"?"#B4915F":"#C4B8A8"}}>History</span>
               </button>
               <button onClick={()=>setShowAdd(true)}
                 style={{width:50,height:50,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 24px rgba(180,145,95,0.35)"}}>
