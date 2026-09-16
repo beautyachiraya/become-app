@@ -2,6 +2,9 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, setDoc, getDocs, deleteDoc, getDoc } from "firebase/firestore";
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
+import { expiryDaysForPack } from "./packageExpiry";
+import { isNeedsAttention, isFinishedPack, packSource, packStatus, sortOpenPacks } from "./packageStatus";
+import { buildHistoryEvents, filterHistoryEvents, historyClinics, HISTORY_EMPTY_COPY } from "./historyEvents";
 
 const googleProvider = new GoogleAuthProvider(); googleProvider.setCustomParameters({prompt:"select_account"});
 const B = {
@@ -53,7 +56,77 @@ const FREQUENCIES = [
   {label:"Every 2 months",days:60},{label:"Every 3 months",days:90},
   {label:"Every 6 months",days:180},{label:"Custom",days:null},
 ];
-const LANGUAGES = ["English","Thai — ภาษาไทย"];  const T = {   en: {     until_treatment: "Until my treatment",     my_treatments: "My treatments",     add_new: "+ Add new",     add_new_treatment: "+ Add New Treatment",     empty_title: "Your becoming starts here.",     empty_sub: "Add your first treatment to begin",     empty_first_package: "Add your first package",     add_treatment: "Add Treatment",     needs_attention: "Needs attention",     sessions_tap: "Sessions — tap to view or log",   },   th: {     until_treatment: "อีกนิดก็ถึงเวลาแล้ว",     my_treatments: "ทรีทเมนต์ของฉัน",     add_new: "+ เพิ่มรายการ",     add_new_treatment: "+ เพิ่มทรีทเมนต์ใหม่",     empty_title: "เริ่มต้นการดูแลตัวเองได้เลยนะคะ",     empty_sub: "เพิ่มทรีทเมนต์แรกของคุณได้เลย",     empty_first_package: "เพิ่มแพ็กเกจแรกของคุณ",     add_treatment: "เพิ่มทรีทเมนต์",     needs_attention: "มีรายการที่ต้องดูแล",     sessions_tap: "แตะเพื่อดูหรือบันทึกเซสชัน",   } };
+const LANGUAGES = ["English","Thai — ภาษาไทย"];
+const T = {
+  en: {
+    until_treatment: "Until my treatment",
+    my_treatments: "My treatments",
+    add_new: "+ Add new",
+    add_new_treatment: "+ Add New Treatment",
+    empty_title: "Your becoming starts here.",
+    empty_sub: "Add your first treatment to begin",
+    empty_first_package: "Add your first package",
+    add_treatment: "Add Treatment",
+    needs_attention: "Needs attention",
+    sessions_tap: "Sessions — tap to view or log",
+    history_tab: "History",
+    history_title: "History",
+    history_sub: "Finished sessions and packages",
+    history_empty: HISTORY_EMPTY_COPY,
+    filter_all: "All",
+    history_sessions: "Sessions",
+    history_packages: "Packages",
+    history_clinic_all: "All clinics",
+    history_filter_empty: "Nothing matches this filter.",
+    event_session: "Session used",
+    event_package: "Package finished",
+    used_up: "Used up",
+    expired: "Expired",
+    promo: "Promo",
+    paid: "Paid",
+    buy_more: "Buy more",
+    one_session: "1 session",
+    n_of_n_used: "{used} of {total} used",
+    n_left_expired: "{n} left · expired",
+    home_history_hint: "Used-up and expired packages stay in History.",
+    package_type: "Package type",
+    expiry_default_hint: "Leave blank to use 90 days for promo, 180 for paid.",
+  },
+  th: {
+    until_treatment: "อีกนิดก็ถึงเวลาแล้ว",
+    my_treatments: "ทรีทเมนต์ของฉัน",
+    add_new: "+ เพิ่มรายการ",
+    add_new_treatment: "+ เพิ่มทรีทเมนต์ใหม่",
+    empty_title: "เริ่มต้นการดูแลตัวเองได้เลยนะคะ",
+    empty_sub: "เพิ่มทรีทเมนต์แรกของคุณได้เลย",
+    empty_first_package: "เพิ่มแพ็กเกจแรกของคุณ",
+    add_treatment: "เพิ่มทรีทเมนต์",
+    needs_attention: "มีรายการที่ต้องดูแล",
+    sessions_tap: "แตะเพื่อดูหรือบันทึกเซสชัน",
+    history_tab: "ประวัติ",
+    history_title: "ประวัติ",
+    history_sub: "เซสชันและแพ็กเกจที่ใช้แล้ว",
+    history_empty: "ยังไม่มีประวัติ เมื่อคุณใช้เซสชันหรือใช้แพ็กเกจครบ จะแสดงที่นี่",
+    filter_all: "ทั้งหมด",
+    history_sessions: "เซสชัน",
+    history_packages: "แพ็กเกจ",
+    history_clinic_all: "ทุกคลินิก",
+    history_filter_empty: "ไม่พบรายการที่ตรงกับตัวกรองนี้",
+    event_session: "ใช้เซสชัน",
+    event_package: "แพ็กเกจสิ้นสุด",
+    used_up: "ใช้ครบแล้ว",
+    expired: "หมดอายุ",
+    promo: "โปรโม",
+    paid: "ชำระแล้ว",
+    buy_more: "ซื้อเพิ่ม",
+    one_session: "1 เซสชัน",
+    n_of_n_used: "ใช้ไป {used} จาก {total}",
+    n_left_expired: "เหลือ {n} · หมดอายุ",
+    home_history_hint: "แพ็กเกจที่ใช้ครบหรือหมดอายุจะอยู่ในประวัติ",
+    package_type: "ประเภทแพ็กเกจ",
+    expiry_default_hint: "ถ้าไม่ระบุ โปรโมจะหมดอายุใน 90 วัน ชำระแล้ว 180 วัน",
+  },
+};
 const CURRENCIES = ["THB — Thai Baht ฿","USD — US Dollar $","AED — UAE Dirham د.إ"];
 const COUNTRY_CODES = ["+66 TH","+1 US","+44 UK","+65 SG","+81 JP","+82 KR","+86 CN","+33 FR","+971 AE"];
 
@@ -68,6 +141,15 @@ const SAMPLE_DATA = [
 
 // ─── HELPERS ─────────────────────────────────────────────────────
 function fmtDate(d){if(!d)return"—";return new Date(d).toLocaleDateString("en-US",{day:"numeric",month:"short",year:"numeric"});}
+function fmtDateTime(d){
+  if(!d)return"—";
+  const dt=new Date(d);
+  if(Number.isNaN(dt.getTime()))return"—";
+  const hasTime=typeof d==="string"&&(d.includes("T")||/\d:\d/.test(d));
+  if(!hasTime)return dt.toLocaleDateString("en-US",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
+  return dt.toLocaleString("en-US",{weekday:"short",day:"numeric",month:"short",year:"numeric",hour:"numeric",minute:"2-digit"});
+}
+function noteSnippet(text){if(!text)return"";const s=String(text).trim();return s.length>72?s.slice(0,72)+"…":s;}
 function fmtShort(d){if(!d)return"—";return new Date(d).toLocaleDateString("en-US",{day:"numeric",month:"short"});}
 function daysUntil(d){if(!d)return null;const t=new Date();t.setHours(0,0,0,0);return Math.round((new Date(d)-t)/86400000);}
 function addDays(d,n){if(!d)return null;const dt=new Date(d);dt.setDate(dt.getDate()+n);return dt.toISOString().split("T")[0];}
@@ -249,6 +331,8 @@ export default function Become(){
 
   const [treatments,setTreatments]=useState([]);
   const [appTab,setAppTab]=useState("home");
+  const [historyFilter,setHistoryFilter]=useState("all");
+  const [historyClinic,setHistoryClinic]=useState("all");
   const [view,setView]=useState("home");
   const [selectedId,setSelectedId]=useState(null);
   const [sessionIdx,setSessionIdx]=useState(null);
@@ -274,7 +358,7 @@ export default function Become(){
   const [showTerms,setShowTerms]=useState(false);
   const [privacyAccepted,setPrivacyAccepted]=useState(false);
   const [termsAccepted,setTermsAccepted]=useState(false);
-  const [form,setForm]=useState({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:""});
+  const [form,setForm]=useState({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:"",source:"paid"});
   const [logForm,setLogForm]=useState({date:new Date().toISOString().split("T")[0],note:"",photo:null});
 
   const sel=treatments.find(t=>t.id===selectedId);
@@ -282,11 +366,15 @@ export default function Become(){
   const ac=sel?(AFTERCARE[sel.name]||AFTERCARE["Other"]):null;
   const sortedSessions=sel?[...sel.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
+  const selFinished=!!(sel&&isFinishedPack(sel));
+  const emptyForm={name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:"",source:"paid"};
 
-  useEffect(()=>{   if(authScreen==="app"){     const user=auth.currentUser;     if(!user)return;     getDoc(doc(db,"users",user.uid,"profile","info")).then(snap=>{       if(snap.exists()){         setProfileForm(snap.data());         if(snap.data().photoURL)setProfilePhoto(snap.data().photoURL);       }     });     getDocs(collection(db,"users",user.uid,"treatments")).then(snap=>{       if(!snap.empty){         setTreatments(snap.docs.map(d=>d.data()));       }     });   } },[authScreen]);  const urgent=useMemo(()=>treatments.filter(t=>{
-    const e=daysUntil(t.expiryDate),r=t.totalSessions-t.sessions.length;
-    return(e!==null&&e<=30&&e>=0)||r===0;
-  }),[treatments]);
+  useEffect(()=>{   if(authScreen==="app"){     const user=auth.currentUser;     if(!user)return;     getDoc(doc(db,"users",user.uid,"profile","info")).then(snap=>{       if(snap.exists()){         setProfileForm(snap.data());         if(snap.data().photoURL)setProfilePhoto(snap.data().photoURL);       }     });     getDocs(collection(db,"users",user.uid,"treatments")).then(snap=>{       if(!snap.empty){         setTreatments(snap.docs.map(d=>d.data()));       }     });   } },[authScreen]);
+  const openPacks=useMemo(()=>sortOpenPacks(treatments),[treatments]);
+  const urgent=useMemo(()=>openPacks.filter(t=>isNeedsAttention(t)),[openPacks]);
+  const historyEvents=useMemo(()=>buildHistoryEvents(treatments),[treatments]);
+  const visibleHistory=useMemo(()=>filterHistoryEvents(historyEvents,{kind:historyFilter,clinic:historyClinic}),[historyEvents,historyFilter,historyClinic]);
+  const historyClinicOptions=useMemo(()=>historyClinics(historyEvents),[historyEvents]);
 
 
   function handleOtpInput(val,i){
@@ -389,27 +477,35 @@ export default function Become(){
     else{setLogTargetIdx(idx);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}
   }
 async function logSession(){
+    const current=treatments.find(t=>String(t.id)===String(selectedId));
+    if(!current)return;
     const user=auth.currentUser;
     let photoURL=null;
-if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
-      const blob=await fetch(logForm.photo).then(r=>r.blob());
-      const photoRef=ref(storage,`users/${user.uid}/photos/${Date.now()}`);
-      await uploadBytes(photoRef,blob);
-      photoURL=await getDownloadURL(photoRef);
-    }
-    const newSession={id:Date.now(),date:logForm.date,note:logForm.note,photo:photoURL};
-    const updatedTreatments=treatments.map(t=>{
-      if(String(t.id)===String(selectedId)){
-        const updatedT={...t,sessions:[...t.sessions,newSession]};
-        const user=auth.currentUser;
-        if(user){setDoc(doc(db,"users",user.uid,"treatments",String(t.id)),updatedT);}
-        return updatedT;
+    try{
+      if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
+        const blob=await fetch(logForm.photo).then(r=>r.blob());
+        const photoRef=ref(storage,`users/${user.uid}/photos/${Date.now()}`);
+        await uploadBytes(photoRef,blob);
+        photoURL=await getDownloadURL(photoRef);
       }
-      return t;
-    });
-    setTreatments(updatedTreatments);
-    setShowLog(false);
-    setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});
+      const newSession={
+        id:Date.now(),
+        date:logForm.date,
+        note:logForm.note,
+        photo:photoURL,
+        packageId:current.id,
+        sourceAtUse:packSource(current),
+      };
+      const updatedT={...current,sessions:[...current.sessions,newSession]};
+      if(user){
+        await setDoc(doc(db,"users",user.uid,"treatments",String(current.id)),updatedT);
+      }
+      setTreatments(treatments.map(t=>String(t.id)===String(current.id)?updatedT:t));
+      setShowLog(false);
+      setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});
+    }catch(e){
+      alert("Couldn't save your session: "+e.message);
+    }
   }
   function updatePhoto(photo){
     setTreatments(prev=>prev.map(t=>{
@@ -422,7 +518,10 @@ if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
   async function addTreatment(){
     const n=form.name==="Other"?form.customName:form.name;
     const freq=form.frequencyLabel==="Custom"?parseInt(form.customDays):form.frequency;
-    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,sessions:[]};
+    const source=form.source==="promo"?"promo":"paid";
+    const today=new Date().toISOString().split("T")[0];
+    const expiryDate=form.expiryDate||addDays(today,expiryDaysForPack(source));
+    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate,palette:treatments.length%PALETTE.length,notes:form.notes,sessions:[],source};
     const user=auth.currentUser;
     if(user){
       try{
@@ -434,19 +533,58 @@ if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
     }
     setTreatments([...treatments,newT]);
     setShowAdd(false);
-    setForm({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:""});
+    setForm(emptyForm);
+  }
+  function buyMore(pack){
+    if(!pack)return;
+    const known=TREATMENT_TYPES.includes(pack.name);
+    setForm({
+      ...emptyForm,
+      name:known?pack.name:"Other",
+      customName:known?"":(pack.name||""),
+      clinic:pack.clinic||"",
+      brandUnit:pack.brandUnit||"",
+      frequency:pack.frequency||30,
+      frequencyLabel:pack.frequencyLabel||"Monthly",
+      source:packSource(pack),
+    });
+    setShowAdd(true);
+  }
+  function openHistoryEvent(ev){
+    if(!ev||ev.packageId==null)return;
+    setSelectedId(ev.packageId);
+    if(ev.type==="session"){
+      const pack=treatments.find(t=>String(t.id)===String(ev.packageId));
+      if(pack){
+        const sorted=[...pack.sessions].sort((a,b)=>new Date(a.date||a.usedAt)-new Date(b.date||b.usedAt));
+        const idx=sorted.findIndex(s=>String(s.id)===String(ev.sessionId));
+        if(idx>=0){setSessionIdx(idx);setDetailTab("sessions");setView("session");return;}
+      }
+    }
+    setDetailTab("sessions");
+    setView("detail");
   }
   function deleteTreatment(id){   setTreatments(treatments.filter(t=>t.id!==id));   const user=auth.currentUser;   if(user){deleteDoc(doc(db,"users",user.uid,"treatments",String(id)));}   setView("home"); }
   function goToDetail(id){setSelectedId(id);setDetailTab("sessions");setView("detail");}
-  function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||""});setShowEdit(true);}
+  function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||"",source:packSource(t)});setShowEdit(true);}
 function saveEdit(){
     if(!editForm||!sel)return;
     const freq=editForm.frequencyLabel==="Custom"?parseInt(editForm.customDays):editForm.frequency;
-    const updatedT={...sel,name:editForm.name,clinic:editForm.clinic,brandUnit:editForm.brandUnit,totalSessions:parseInt(editForm.totalSessions),frequency:freq,frequencyLabel:editForm.frequencyLabel,expiryDate:editForm.expiryDate,notes:editForm.notes};
+    const updatedT={...sel,name:editForm.name,clinic:editForm.clinic,brandUnit:editForm.brandUnit,totalSessions:parseInt(editForm.totalSessions),frequency:freq,frequencyLabel:editForm.frequencyLabel,expiryDate:editForm.expiryDate,notes:editForm.notes,source:editForm.source==="promo"?"promo":"paid"};
     const user=auth.currentUser;
-    if(user){setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updatedT);}
-    setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
-    setShowEdit(false);
+    const persist=async()=>{
+      if(user){
+        try{
+          await setDoc(doc(db,"users",user.uid,"treatments",String(sel.id)),updatedT);
+        }catch(e){
+          alert("Couldn't save your treatment: "+e.message);
+          return;
+        }
+      }
+      setTreatments(treatments.map(t=>t.id!==sel.id?t:updatedT));
+      setShowEdit(false);
+    };
+    persist();
   }
   function openEditSession(session){setEditSessionForm({date:session.date,note:session.note||""});setShowEditSession(true);}
 function saveEditSession(){
@@ -497,11 +635,13 @@ function saveEditSession(){
     .pill-c{background:rgba(180,145,95,0.1);color:#8C6E40;border:1px solid rgba(180,145,95,0.18);}
     .pill-danger{background:#FAEAEA;color:#C05858;}
     .pill-late{background:#F5E6F0;color:#A0407A;border:1px solid rgba(160,64,122,0.2);}
+    .pill-promo{background:#FDF0F2;color:#A04058;border:1px solid rgba(212,120,138,0.25);}
+    .pill-paid{background:rgba(180,145,95,0.1);color:#8C6E40;border:1px solid rgba(180,145,95,0.18);}
     .mbg{position:fixed;inset:0;background:rgba(28,22,18,0.45);backdrop-filter:blur(8px);z-index:200;display:flex;align-items:flex-end;justify-content:center;}
     .msheet{background:#FAF7F2;border-radius:28px 28px 0 0;padding:12px 24px 52px;width:100%;max-width:430px;max-height:90vh;overflow-y:auto;animation:slideUp 0.32s cubic-bezier(0.16,1,0.3,1);}
     .mhandle{width:36px;height:4px;border-radius:2px;background:#EDE5D8;margin:0 auto 24px;}
     .nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:rgba(250,247,242,0.97);backdrop-filter:blur(20px);border-top:1px solid rgba(180,145,95,0.1);padding:10px 0 26px;display:flex;justify-content:space-around;align-items:center;z-index:100;}
-    .nbtn{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 20px;border-radius:12px;transition:background 0.15s;}
+    .nbtn{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 10px;border-radius:12px;transition:background 0.15s;min-width:56px;}
     .nbtn:hover{background:#F5EFE6;}
     .nbtn.on{background:rgba(180,145,95,0.1);}
     .back{background:#F5EFE6;border:none;border-radius:50px;padding:8px 16px 8px 12px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:#7A6A58;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;}
@@ -811,8 +951,80 @@ function saveEditSession(){
                     <div className="srow" onClick={()=>setShowTerms(true)}><p style={{fontSize:13,fontWeight:500}}>Terms of Service</p><span style={{color:"#C4B8A8"}}>›</span></div>
                   </div>
                 </div>
-                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){}setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setJustSignedUp(false);setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
+                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){}setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setJustSignedUp(false);setHistoryFilter("all");setHistoryClinic("all");setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
                 <p style={{fontSize:11,color:"#C4B8A8",textAlign:"center"}}>Become v1.0.0</p>
+              </div>
+            </div>
+          )}
+
+          {/* HISTORY */}
+          {appTab==="history"&&view==="home"&&(
+            <div style={{paddingBottom:100}}>
+              <div style={{background:"linear-gradient(160deg,#EDE5D8,#F5EFE6,#FAF7F2)",padding:"calc(60px + env(safe-area-inset-top)) 24px 22px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.12)"}}>
+                <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:36,fontWeight:300,marginBottom:6}}>{t("history_title")}</h1>
+                <p style={{fontSize:13,color:"#9A8A78"}}>{t("history_sub")}</p>
+              </div>
+              <div style={{padding:"20px"}}>
+                <div className="tabs" style={{marginBottom:12}}>
+                  {[{id:"all",label:t("filter_all")},{id:"sessions",label:t("history_sessions")},{id:"packages",label:t("history_packages")}].map(f=>(
+                    <button key={f.id} className={`t ${historyFilter===f.id?"on":""}`} onClick={()=>setHistoryFilter(f.id)}>{f.label}</button>
+                  ))}
+                </div>
+                {historyClinicOptions.length>1&&(
+                  <select className="inp" value={historyClinic} onChange={e=>setHistoryClinic(e.target.value)} style={{marginBottom:16}}>
+                    <option value="all">{t("history_clinic_all")}</option>
+                    {historyClinicOptions.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
+                )}
+                {historyEvents.length===0&&(
+                  <div className="card" style={{padding:"48px 24px",textAlign:"center",marginTop:8}}>
+                    <div style={{width:52,height:52,borderRadius:14,background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(180,145,95,0.24)"}}>
+                      <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,color:"#FAF7F2",fontStyle:"italic",fontWeight:300}}>b</span>
+                    </div>
+                    <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:300,marginBottom:10}}>{t("history_title")}</p>
+                    <p style={{fontSize:14,color:"#9A8A78",lineHeight:1.65}}>{t("history_empty")}</p>
+                  </div>
+                )}
+                {historyEvents.length>0&&visibleHistory.length===0&&(
+                  <div className="card" style={{padding:"28px 20px",textAlign:"center"}}>
+                    <p style={{fontSize:14,color:"#9A8A78"}}>{t("history_filter_empty")}</p>
+                  </div>
+                )}
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                  {visibleHistory.map(ev=>{
+                    const promo=ev.source==="promo";
+                    const snippet=noteSnippet(ev.notes);
+                    return(
+                      <button key={ev.id} className="card" onClick={()=>openHistoryEvent(ev)}
+                        style={{width:"100%",textAlign:"left",padding:"18px 18px",cursor:"pointer",border:"1px solid rgba(180,145,95,0.1)",background:"#FFF"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start"}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <p style={{fontSize:10,fontWeight:600,letterSpacing:1.6,textTransform:"uppercase",color:"#9A8A78",marginBottom:8}}>
+                              {ev.type==="session"?t("event_session"):t("event_package")}
+                            </p>
+                            <p style={{fontSize:16,fontWeight:600,color:"#1C1612",lineHeight:1.35}}>{ev.treatment} · {ev.clinic}</p>
+                            <p style={{fontSize:15,color:"#4A3C30",marginTop:8,fontWeight:500}}>
+                              {ev.type==="package"
+                                ? `${ev.status==="expired"?t("expired"):t("used_up")} · ${fmtDateTime(ev.at)}`
+                                : fmtDateTime(ev.at)}
+                            </p>
+                            {ev.type==="session"&&(
+                              <p style={{fontSize:13,color:"#9A8A78",marginTop:8}}>{t("one_session")}{snippet?` · ${snippet}`:""}</p>
+                            )}
+                            {ev.type==="package"&&(
+                              <p style={{fontSize:13,color:"#9A8A78",marginTop:8}}>
+                                {ev.status==="expired"
+                                  ? t("n_left_expired").replace("{n}", String(ev.remaining))
+                                  : t("n_of_n_used").replace("{used}", String(ev.used)).replace("{total}", String(ev.total))}
+                              </p>
+                            )}
+                          </div>
+                          <span className={`pill ${promo?"pill-promo":"pill-paid"}`}>{promo?t("promo"):t("paid")}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
@@ -951,17 +1163,17 @@ function saveEditSession(){
                 {urgent.length>0&&(
                   <div className="pop p2" style={{marginBottom:20}}>
                     <div style={{background:"#FEF5E4",borderRadius:20,padding:"18px 20px",border:"1px solid rgba(200,144,64,0.2)"}}>
-                      <p style={{fontSize:10,fontWeight:600,color:"#C89040",letterSpacing:2,textTransform:"uppercase",marginBottom:12}}>Needs attention</p>
-                      {urgent.map((t,i)=>{
-                        const e=daysUntil(t.expiryDate),r=t.totalSessions-t.sessions.length;
+                      <p style={{fontSize:10,fontWeight:600,color:"#C89040",letterSpacing:2,textTransform:"uppercase",marginBottom:12}}>{t("needs_attention")}</p>
+                      {urgent.map((pack,i)=>{
+                        const e=daysUntil(pack.expiryDate);
                         return(
-                          <div key={t.id} onClick={()=>goToDetail(t.id)}
+                          <div key={pack.id} onClick={()=>goToDetail(pack.id)}
                             style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderTop:i>0?"1px solid rgba(200,144,64,0.12)":"none",cursor:"pointer"}}>
                             <div>
-                              <p style={{fontSize:14,fontWeight:600}}>{t.name}</p>
-                              <p style={{fontSize:12,color:"#9A8A78"}}>{t.clinic}</p>
+                              <p style={{fontSize:14,fontWeight:600}}>{pack.name}</p>
+                              <p style={{fontSize:12,color:"#9A8A78"}}>{pack.clinic}</p>
                             </div>
-                            <span className="pill pill-warn">{r===0?"All used":`${e}d left`}</span>
+                            <span className="pill pill-warn">{e}d left</span>
                           </div>
                         );
                       })}
@@ -971,13 +1183,13 @@ function saveEditSession(){
 
 
                 {/* Until My Treatment */}
-                {treatments.some(t=>getNext(t)&&t.sessions.length<t.totalSessions)&&(
+                {openPacks.some(pack=>getNext(pack))&&(
                   <div className="pop p4" style={{marginBottom:20}}>
                     <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase",marginBottom:14,paddingLeft:4}}>{t("until_treatment")}</p>
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                      {treatments
-                        .map(t=>({...t,nextDate:getNext(t),nextDays:daysUntil(getNext(t))}))
-                        .filter(t=>t.nextDate&&t.sessions.length<t.totalSessions)
+                      {openPacks
+                        .map(pack=>({...pack,nextDate:getNext(pack),nextDays:daysUntil(getNext(pack))}))
+                        .filter(pack=>pack.nextDate)
                         .sort((a,b)=>(a.nextDays??999)-(b.nextDays??999))
                         .map(t=>{
                           const p=PALETTE[t.palette%PALETTE.length];
@@ -1050,60 +1262,62 @@ function saveEditSession(){
                   <button onClick={()=>setShowAdd(true)} style={{background:"none",border:"none",fontSize:12,fontWeight:600,color:"#B4915F",cursor:"pointer",fontFamily:"inherit"}}>{t("add_new")}</button>
                 </div>
 
-                {treatments.length===0&&(
+                {openPacks.length===0&&(
                   <div className="card" style={{padding:"52px 24px",textAlign:"center"}}>
                     <div style={{width:52,height:52,borderRadius:14,background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(180,145,95,0.24)"}}>
                       <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,color:"#FAF7F2",fontStyle:"italic",fontWeight:300}}>b</span>
                     </div>
-                    <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:300,color:"#9A8A78",fontStyle:"italic",marginBottom:8}}>Your becoming starts here.</p>
-                    <p style={{fontSize:13,color:"#C4B8A8",marginBottom:28}}>{justSignedUp?t("empty_first_package"):t("empty_sub")}</p>
-                    <button className="btn btn-c" style={{width:"auto",padding:"14px 32px"}} onClick={()=>setShowAdd(true)}>Add Treatment</button>
+                    <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:300,color:"#9A8A78",fontStyle:"italic",marginBottom:8}}>{t("empty_title")}</p>
+                    <p style={{fontSize:13,color:"#C4B8A8",marginBottom:historyEvents.length?12:28}}>{t("empty_first_package")}</p>
+                    {historyEvents.length>0&&<p style={{fontSize:12,color:"#9A8A78",marginBottom:28,lineHeight:1.55}}>{t("home_history_hint")}</p>}
+                    <button className="btn btn-c" style={{width:"auto",padding:"14px 32px"}} onClick={()=>setShowAdd(true)}>{t("empty_first_package")}</button>
                   </div>
                 )}
 
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
-                  {treatments.map((t,i)=>{
-                    const p=PALETTE[t.palette%PALETTE.length];
-                    const used=t.sessions.length;
-                    const rem=t.totalSessions-used;
-                    const expDays=daysUntil(t.expiryDate);
-                    const isExpired=expDays!==null&&expDays<0;
-                    const next=getNext(t);
-                    const sortedS=[...t.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
+                  {openPacks.map((pack,i)=>{
+                    const p=PALETTE[pack.palette%PALETTE.length];
+                    const used=pack.sessions.length;
+                    const rem=pack.totalSessions-used;
+                    const expDays=daysUntil(pack.expiryDate);
+                    const next=getNext(pack);
+                    const sortedS=[...pack.sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
+                    const src=packSource(pack);
                     return(
-                      <div key={t.id} className={`tcard pop p${Math.min(i+3,5)}`} style={{padding:"22px 20px"}} onClick={()=>goToDetail(t.id)}>
+                      <div key={pack.id} className={`tcard pop p${Math.min(i+3,5)}`} style={{padding:"22px 20px"}} onClick={()=>goToDetail(pack.id)}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
                           <div style={{display:"flex",gap:12,alignItems:"flex-start",flex:1}}>
                             <div style={{width:44,height:44,borderRadius:13,background:p.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20,color:p.accent}}>
-                              {TREATMENT_ICONS[t.name]||"✧"}
+                              {TREATMENT_ICONS[pack.name]||"✧"}
                             </div>
                             <div style={{flex:1}}>
-                              <p style={{fontSize:15,fontWeight:600,marginBottom:2}}>{t.name}</p>
-                              <p style={{fontSize:12,color:"#9A8A78"}}>{t.clinic}</p>
-                              {t.brandUnit&&<p style={{fontSize:11,color:"#B4915F",fontWeight:500,marginTop:2}}>{t.brandUnit}</p>}{t.notes&&<p style={{fontSize:11,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{t.notes}</p>}
+                              <p style={{fontSize:15,fontWeight:600,marginBottom:2}}>{pack.name}</p>
+                              <p style={{fontSize:12,color:"#9A8A78"}}>{pack.clinic}</p>
+                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                                <span className={`pill ${src==="promo"?"pill-promo":"pill-paid"}`}>{src==="promo"?t("promo"):t("paid")}</span>
+                              </div>
+                              {pack.brandUnit&&<p style={{fontSize:11,color:"#B4915F",fontWeight:500,marginTop:6}}>{pack.brandUnit}</p>}{pack.notes&&<p style={{fontSize:11,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{pack.notes}</p>}
                             </div>
                           </div>
                           <div style={{textAlign:"right",marginLeft:12,display:"flex",flexDirection:"column",alignItems:"flex-end"}}>
                             <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:40,fontWeight:400,color:p.accent,lineHeight:1}}>{rem}</p>
                             <p style={{fontSize:9,color:"#C4B8A8",fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>left</p>
-                            {isExpired
-                              ? <span style={{fontSize:11,fontWeight:700,color:"#C05858",background:"#FAEAEA",padding:"3px 10px",borderRadius:20}}>Expired</span>
-                              : t.expiryDate
-                                ? <span style={{fontSize:11,color:"#9A8A78"}}>Exp {fmtShort(t.expiryDate)}</span>
-                                : null
+                            {pack.expiryDate
+                              ? <span style={{fontSize:11,color:"#9A8A78"}}>Exp {fmtShort(pack.expiryDate)}</span>
+                              : null
                             }
                           </div>
                         </div>
                         <div style={{height:1,background:`linear-gradient(90deg,transparent,${p.accent}20,transparent)`,marginBottom:16}}/>
                         <div style={{marginBottom:16}}>
-                          <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>Sessions — tap to view or log</p>
+                          <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>{t("sessions_tap")}</p>
                           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                            {Array.from({length:t.totalSessions}).map((_,idx)=>{
+                            {Array.from({length:pack.totalSessions}).map((_,idx)=>{
                               const sess=sortedS[idx];
                               const isDone=idx<used;
                               const isNext=idx===used;
                               return(
-                                <button key={idx} onClick={e=>{e.stopPropagation();openDot(t.id,idx,sess);}}
+                                <button key={idx} onClick={e=>{e.stopPropagation();openDot(pack.id,idx,sess);}}
                                   style={{width:isDone?34:isNext?28:22,height:isDone?34:isNext?28:22,borderRadius:"50%",
                                     border:isDone?"none":isNext?`2px dashed ${p.accent}`:`1.5px dashed ${p.accent}30`,
                                     background:isDone?`linear-gradient(135deg,${p.soft},${p.accent})`:isNext?`${p.accent}0D`:"transparent",
@@ -1120,21 +1334,20 @@ function saveEditSession(){
                                 </button>
                               );
                             })}
-                            <span style={{fontSize:11,color:"#9A8A78",marginLeft:4,fontWeight:500}}>{used}/{t.totalSessions}</span>
+                            <span style={{fontSize:11,color:"#9A8A78",marginLeft:4,fontWeight:500}}>{used}/{pack.totalSessions}</span>
                           </div>
                         </div>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                           {next&&rem>0&&daysUntil(next)>=0&&<span className="pill pill-ok">Next {fmtShort(next)}</span>}
                           {next&&rem>0&&daysUntil(next)<0&&<span className="pill pill-late">Late · {Math.abs(daysUntil(next))}d overdue</span>}
                           {expDays!==null&&expDays>=0&&expDays<=30&&<span className="pill pill-warn">Exp in {expDays}d</span>}
-                          {rem===0&&<span className="pill pill-done">Complete</span>}
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                {treatments.length>0&&(
+                {openPacks.length>0&&(
                   <button className="btn btn-c" style={{marginTop:20,marginBottom:4}} onClick={()=>setShowAdd(true)}>{t("add_new_treatment")}</button>
                 )}
               </div>
@@ -1147,6 +1360,9 @@ function saveEditSession(){
               <div style={{background:`linear-gradient(160deg,${pal.bg},#FAF7F2)`,padding:"52px 24px 28px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.1)"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
                   <button className="back" onClick={()=>setView("home")}>← Back</button>
+                  {selFinished?(
+                    <span className={`pill ${packStatus(sel)==="expired"?"pill-danger":"pill-done"}`}>{packStatus(sel)==="expired"?t("expired"):t("used_up")}</span>
+                  ):(
                   <button onClick={()=>openEdit(sel)}
                     style={{background:"#F5EFE6",border:"1px solid rgba(180,145,95,0.2)",borderRadius:50,padding:"8px 18px",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,color:"#B4915F",cursor:"pointer",display:"flex",alignItems:"center",gap:6,transition:"all 0.15s"}}
                     onMouseEnter={e=>e.currentTarget.style.background="#EDE5D8"}
@@ -1154,6 +1370,7 @@ function saveEditSession(){
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B4915F" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     Edit
                   </button>
+                  )}
                 </div>
                 <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
                   <div style={{width:54,height:54,borderRadius:16,background:pal.bg,border:`1px solid ${pal.accent}20`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:24,color:pal.accent}}>
@@ -1162,7 +1379,10 @@ function saveEditSession(){
                   <div>
                     <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,lineHeight:1.1}}>{sel.name}</h2>
                     <p style={{fontSize:13,color:"#9A8A78",marginTop:4}}>{sel.clinic}</p>
-                    {sel.brandUnit&&<p style={{fontSize:12,color:"#B4915F",fontWeight:500,marginTop:2}}>{sel.brandUnit}</p>}{sel.notes&&<p style={{fontSize:12,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{sel.notes}</p>}
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                      <span className={`pill ${packSource(sel)==="promo"?"pill-promo":"pill-paid"}`}>{packSource(sel)==="promo"?t("promo"):t("paid")}</span>
+                    </div>
+                    {sel.brandUnit&&<p style={{fontSize:12,color:"#B4915F",fontWeight:500,marginTop:6}}>{sel.brandUnit}</p>}{sel.notes&&<p style={{fontSize:12,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{sel.notes}</p>}
                   </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:24}}>
@@ -1173,6 +1393,9 @@ function saveEditSession(){
                     </div>
                   ))}
                 </div>
+                {selFinished&&(
+                  <button className="btn btn-c" style={{marginTop:16}} onClick={()=>buyMore(sel)}>{t("buy_more")}</button>
+                )}
               </div>
 
               <div style={{padding:"20px"}}>
@@ -1183,7 +1406,7 @@ function saveEditSession(){
 
                 {detailTab==="sessions"&&(
                   <div>
-                    {getNext(sel)&&sel.sessions.length<sel.totalSessions&&(()=>{
+                    {getNext(sel)&&sel.sessions.length<sel.totalSessions&&!selFinished&&(()=>{
                       const nextDays=daysUntil(getNext(sel));
                       const isLate=nextDays!==null&&nextDays<0;
                       return(
@@ -1222,18 +1445,18 @@ function saveEditSession(){
 
                     <div className="card" style={{padding:"22px",marginBottom:16}}>
                       <p style={{fontSize:14,fontWeight:600,marginBottom:4}}>Session Timeline</p>
-                      <p style={{fontSize:12,color:"#9A8A78",marginBottom:20}}>Tap a completed dot to view details, tap + to log next session</p>
+                      <p style={{fontSize:12,color:"#9A8A78",marginBottom:20}}>{selFinished?"Tap a completed session to view details":"Tap a completed dot to view details, tap + to log next session"}</p>
                       <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-start"}}>
                         {Array.from({length:sel.totalSessions}).map((_,i)=>{
                           const ss=sortedSessions[i];
                           const isDone=i<sel.sessions.length;
-                          const isNext=i===sel.sessions.length;
+                          const isNext=!selFinished&&i===sel.sessions.length;
                           return(
                             <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
                               <button
                                 onClick={()=>{
                                   if(ss){setSessionIdx(i);setView("session");}
-                                  else{setLogTargetIdx(i);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}
+                                  else if(!selFinished){setLogTargetIdx(i);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}
                                 }}
                                 style={{width:isDone?48:isNext?40:32,height:isDone?48:isNext?40:32,borderRadius:"50%",
                                   border:isDone?"none":isNext?`2px dashed ${pal.accent}`:`1.5px dashed ${pal.accent}25`,
@@ -1258,7 +1481,7 @@ function saveEditSession(){
                       </div>
                     </div>
 
-                    {sel.sessions.length<sel.totalSessions&&(
+                    {sel.sessions.length<sel.totalSessions&&!selFinished&&(
                       <button className="btn" style={{background:pal.accent,color:"#FFF",boxShadow:`0 8px 24px ${pal.accent}30`,marginBottom:16,fontWeight:600}}
                         onClick={()=>{setLogTargetIdx(sel.sessions.length);setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}}>
                         + Log Session {sel.sessions.length+1}
@@ -1407,10 +1630,25 @@ function saveEditSession(){
                   </div>
                   {form.name==="Other"&&<div><span className="lbl">Treatment name</span><input className="inp" placeholder="e.g. Sculptra" value={form.customName} onChange={e=>setForm({...form,customName:e.target.value})}/></div>}
                   <div><span className="lbl">Clinic / Provider</span><input className="inp" placeholder="e.g. Glow Clinic Bangkok" value={form.clinic} onChange={e=>setForm({...form,clinic:e.target.value})}/></div>
+                  <div>
+                    <span className="lbl">{t("package_type")}</span>
+                    <div style={{display:"flex",gap:8}}>
+                      {["promo","paid"].map(src=>(
+                        <button key={src} type="button" onClick={()=>setForm({...form,source:src})}
+                          style={{flex:1,padding:"12px",borderRadius:14,border:form.source===src?"1.5px solid #B4915F":"1.5px solid #EDE5D8",background:form.source===src?"rgba(180,145,95,0.08)":"#FAF7F2",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:600,color:form.source===src?"#8C6E40":"#9A8A78"}}>
+                          {src==="promo"?t("promo"):t("paid")}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div><span className="lbl">Brand, Unit or cc (optional)</span><input className="inp" placeholder="e.g. Botox 20 units · Juvederm 1cc" value={form.brandUnit} onChange={e=>setForm({...form,brandUnit:e.target.value})}/></div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                     <div><span className="lbl">Total sessions</span><input className="inp" type="number" min="1" placeholder="e.g. 6" value={form.totalSessions} onChange={e=>setForm({...form,totalSessions:e.target.value})}/></div>
-                    <div><span className="lbl">Expiry date</span><input className="inp" type="date" value={form.expiryDate} onChange={e=>setForm({...form,expiryDate:e.target.value})}/></div>
+                    <div>
+                      <span className="lbl">Expiry date</span>
+                      <input className="inp" type="date" value={form.expiryDate} onChange={e=>setForm({...form,expiryDate:e.target.value})}/>
+                      <p style={{fontSize:11,color:"#9A8A78",marginTop:6,lineHeight:1.45}}>{t("expiry_default_hint")}</p>
+                    </div>
                   </div>
                   <div><span className="lbl">How often do you go?</span>
                     <select className="inp" value={form.frequencyLabel} onChange={e=>{const f=FREQUENCIES.find(x=>x.label===e.target.value);setForm({...form,frequencyLabel:e.target.value,frequency:f?f.days:30});}}>
@@ -1548,6 +1786,17 @@ function saveEditSession(){
                   <div><span className="lbl">Clinic / Provider</span>
                     <input className="inp" placeholder="e.g. Glow Clinic Bangkok" value={editForm.clinic} onChange={e=>setEditForm({...editForm,clinic:e.target.value})}/>
                   </div>
+                  <div>
+                    <span className="lbl">{t("package_type")}</span>
+                    <div style={{display:"flex",gap:8}}>
+                      {["promo","paid"].map(src=>(
+                        <button key={src} type="button" onClick={()=>setEditForm({...editForm,source:src})}
+                          style={{flex:1,padding:"12px",borderRadius:14,border:editForm.source===src?"1.5px solid #B4915F":"1.5px solid #EDE5D8",background:editForm.source===src?"rgba(180,145,95,0.08)":"#FAF7F2",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:600,color:editForm.source===src?"#8C6E40":"#9A8A78"}}>
+                          {src==="promo"?t("promo"):t("paid")}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div><span className="lbl">Brand, Unit or cc (optional)</span>
                     <input className="inp" placeholder="e.g. Botox 20 units · Juvederm 1cc" value={editForm.brandUnit} onChange={e=>setEditForm({...editForm,brandUnit:e.target.value})}/>
                   </div>
@@ -1643,6 +1892,12 @@ function saveEditSession(){
                   <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22" fill="none"/>
                 </svg>
                 <span style={{fontSize:10,fontWeight:600,color:appTab==="home"?"#B4915F":"#C4B8A8"}}>Home</span>
+              </button>
+              <button className={`nbtn ${appTab==="history"?"on":""}`} onClick={()=>{setAppTab("history");setView("home");}}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={appTab==="history"?"#B4915F":"#C4B8A8"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span style={{fontSize:10,fontWeight:600,color:appTab==="history"?"#B4915F":"#C4B8A8"}}>{t("history_tab")}</span>
               </button>
               <button onClick={()=>setShowAdd(true)}
                 style={{width:50,height:50,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 24px rgba(180,145,95,0.35)"}}>
