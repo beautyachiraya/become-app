@@ -20,7 +20,13 @@ function makeClient(overrides) {
     doc: (_db, ...path) => path.join("/"),
     collection: (_db, ...path) => path.join("/"),
     getDoc: jest.fn(),
-    getDocs: jest.fn(),
+    getDocs: jest.fn((ref) => {
+      const path = String(ref);
+      if (path.endsWith("/packages") || path.endsWith("/sessions")) {
+        return Promise.resolve(treatmentsSnap([]));
+      }
+      return Promise.resolve(treatmentsSnap([]));
+    }),
     setDoc: jest.fn(),
     deleteDoc: jest.fn(),
     ...overrides,
@@ -50,7 +56,13 @@ describe("formatWriteError", () => {
 describe("loadUserData", () => {
   it("fetches profile once when called twice for the same uid", async () => {
     const getDoc = jest.fn().mockResolvedValue(profileSnap({ name: "Sophia", photoURL: "x" }));
-    const getDocs = jest.fn().mockResolvedValue(treatmentsSnap([{ id: 1, name: "Botox", sessions: [] }]));
+    const getDocs = jest.fn((ref) => {
+      const path = String(ref);
+      if (path.endsWith("/packages") || path.endsWith("/sessions")) {
+        return Promise.resolve(treatmentsSnap([]));
+      }
+      return Promise.resolve(treatmentsSnap([{ id: 1, name: "Botox", sessions: [] }]));
+    });
     const client = makeClient({ getDoc, getDocs });
 
     const first = client.loadUserData("uid-1");
@@ -60,16 +72,24 @@ describe("loadUserData", () => {
     const result = await first;
     expect(await second).toEqual(result);
     expect(getDoc).toHaveBeenCalledTimes(1);
-    expect(getDocs).toHaveBeenCalledTimes(1);
+    expect(getDocs).toHaveBeenCalledTimes(3);
     expect(result.profile.name).toBe("Sophia");
     expect(result.treatments).toHaveLength(1);
+    expect(result.packages).toEqual([]);
+    expect(result.sessions).toEqual([]);
   });
 
   it("retries after a failed load instead of caching the failure", async () => {
     const getDoc = jest.fn()
       .mockRejectedValueOnce(new Error("unavailable"))
       .mockResolvedValue(profileSnap({ name: "Retry" }));
-    const getDocs = jest.fn().mockResolvedValue(treatmentsSnap([]));
+    const getDocs = jest.fn((ref) => {
+      const path = String(ref);
+      if (path.endsWith("/packages") || path.endsWith("/sessions")) {
+        return Promise.resolve(treatmentsSnap([]));
+      }
+      return Promise.resolve(treatmentsSnap([]));
+    });
     const client = makeClient({ getDoc, getDocs });
 
     await expect(client.loadUserData("uid-1")).rejects.toThrow("unavailable");
@@ -114,5 +134,15 @@ describe("write helpers", () => {
     const deleteDoc = jest.fn().mockRejectedValue(new Error("not-found"));
     const client = makeClient({ deleteDoc });
     await expect(client.deleteTreatment("uid-1", 3)).rejects.toThrow("not-found");
+  });
+
+  it("writes a session ledger doc under users/{uid}/sessions", async () => {
+    const setDoc = jest.fn().mockResolvedValue();
+    const client = makeClient({ setDoc });
+    await client.writeSession("uid-1", { id: 44, packageId: "p1", usedAt: "2026-09-01" });
+    expect(setDoc).toHaveBeenCalledWith(
+      "users/uid-1/sessions/44",
+      { id: 44, packageId: "p1", usedAt: "2026-09-01" }
+    );
   });
 });
