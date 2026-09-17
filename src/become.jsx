@@ -1,9 +1,10 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
-import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
+import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import { createDataClient, formatWriteError } from "./userData";
 import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, packKind, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment } from "./packageStatus";
+import { tabFromPath, pathFromTab, navTargetForControl } from "./appRoute";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
 
@@ -314,6 +315,7 @@ function PolicyModal({title, sections, onClose, onAccept, acceptLabel}){
 // ─── MAIN ─────────────────────────────────────────────────────────
 export default function Become(){
   const [authScreen,setAuthScreen]=useState("login");
+  const [authReady,setAuthReady]=useState(false);
   const [oauthProvider,setOauthProvider]=useState(null);
   const [otpMethod,setOtpMethod]=useState("email");
   const [otpContact,setOtpContact]=useState("");
@@ -336,7 +338,7 @@ export default function Become(){
   const [treatments,setTreatments]=useState([]);
   const treatmentsRef=useRef(treatments);
   treatmentsRef.current=treatments;
-  const [appTab,setAppTab]=useState("home");
+  const [appTab,setAppTab]=useState(()=>tabFromPath(typeof window!=="undefined"?window.location.pathname:"/"));
   const [view,setView]=useState("home");
   const [selectedId,setSelectedId]=useState(null);
   const [sessionIdx,setSessionIdx]=useState(null);
@@ -399,6 +401,45 @@ export default function Become(){
     });
     return()=>{cancelled=true;};
   },[authScreen]);
+
+  useEffect(()=>{
+    const unsub=onAuthStateChanged(auth,(user)=>{
+      setAuthReady(true);
+      if(user){
+        setAuthScreen("app");
+        setAppTab(tabFromPath(window.location.pathname));
+      }else{
+        setAuthScreen(cur=>(cur==="signup"||cur==="reset"?cur:"login"));
+      }
+    });
+    return()=>unsub();
+  },[]);
+
+  useEffect(()=>{
+    function onPop(){
+      setAppTab(tabFromPath(window.location.pathname));
+      setView("home");
+    }
+    window.addEventListener("popstate",onPop);
+    return()=>window.removeEventListener("popstate",onPop);
+  },[]);
+
+  function goToTab(tab){
+    const target=navTargetForControl(tab);
+    if(!target||!target.appTab)return;
+    setAppTab(target.appTab);
+    setView("home");
+    setShowAdd(false);
+    if(target.path&&window.location.pathname!==target.path){
+      window.history.pushState({tab:target.appTab},"",target.path);
+    }
+  }
+
+  function enterApp(){
+    setAuthScreen("app");
+    setAppTab(tabFromPath(window.location.pathname));
+  }
+
   const openPacks=useMemo(()=>listOpenPacks(treatments),[treatments]);
   const historyPacks=useMemo(()=>treatments.filter(t=>isHistoryPack(t)),[treatments]);
   const historyItems=useMemo(()=>buildHistoryTimeline(treatments),[treatments]);
@@ -429,7 +470,7 @@ export default function Become(){
     try{
       await signInWithEmailAndPassword(auth,loginForm.email.trim(),loginForm.password);
       setJustSignedUp(false);
-      setAuthScreen("app");
+      enterApp();
     }catch(e){
       setLoginMessage(mapAuthError(e,"signin")||"Couldn't sign in. Please try again.");
     }finally{
@@ -445,7 +486,7 @@ export default function Become(){
       if(r.user){
         setProfileForm({name:r.user.displayName||"",email:r.user.email||"",phone:""});
         setJustSignedUp(!!fromSignup);
-        setAuthScreen("app");
+        enterApp();
       }
     }catch(e){
       const msg=mapAuthError(e,"google");
@@ -492,7 +533,7 @@ export default function Become(){
       await dataClient.writeProfile(result.user.uid,{name:signupForm.name,email:signupForm.email.trim(),phone:signupForm.phone},{merge:true});
       setProfileForm({name:signupForm.name,email:signupForm.email.trim(),phone:signupForm.phone});
       setJustSignedUp(true);
-      setAuthScreen("app");
+      enterApp();
     }catch(e){
       console.error("[Become] Couldn't create your account", e);
       setSignupMessage(mapAuthError(e,"signup")||"Couldn't create your account. Please try again.");
@@ -728,7 +769,7 @@ async function saveEditSession(){
     .msheet{background:#FAF7F2;border-radius:28px 28px 0 0;padding:12px 24px 52px;width:100%;max-width:430px;max-height:90vh;overflow-y:auto;animation:slideUp 0.32s cubic-bezier(0.16,1,0.3,1);}
     .mhandle{width:36px;height:4px;border-radius:2px;background:#EDE5D8;margin:0 auto 24px;}
     .nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:rgba(250,247,242,0.97);backdrop-filter:blur(20px);border-top:1px solid rgba(180,145,95,0.1);padding:10px 0 26px;display:flex;justify-content:space-around;align-items:center;z-index:100;}
-    .nbtn{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 8px;border-radius:12px;transition:background 0.15s;min-width:56px;}
+    .nbtn{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 8px;border-radius:12px;transition:background 0.15s;min-width:56px;flex:1;position:relative;z-index:2;}
     .nbtn:hover{background:#F5EFE6;}
     .nbtn.on{background:rgba(180,145,95,0.1);}
     .back{background:#F5EFE6;border:none;border-radius:50px;padding:8px 16px 8px 12px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:#7A6A58;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;}
@@ -780,13 +821,21 @@ async function saveEditSession(){
       {oauthProvider&&(
         <OAuthScreen
           provider={oauthProvider}
-          onSuccess={()=>{setOauthProvider(null);setAuthScreen("app");}}
+          onSuccess={()=>{setOauthProvider(null);enterApp();}}
           onCancel={()=>setOauthProvider(null)}
         />
       )}
 
+      {!authReady&&(
+        <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#FAF7F2"}}>
+          <div style={{width:56,height:56,borderRadius:16,background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 24px rgba(180,145,95,0.28)"}}>
+            <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,color:"#FAF7F2",fontStyle:"italic",fontWeight:300}}>b</span>
+          </div>
+        </div>
+      )}
+
       {/* ── LOGIN ── */}
-      {authScreen==="login"&&(
+      {authReady&&authScreen==="login"&&(
         <div className="app" style={{padding:"0 24px 48px"}}>
           <div style={{textAlign:"center",padding:"64px 0 24px"}}>
             <div style={{width:60,height:60,borderRadius:16,background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 8px 24px rgba(180,145,95,0.28)"}}>
@@ -842,7 +891,7 @@ async function saveEditSession(){
       )}
 
       {/* ── FORGOT PASSWORD ── */}
-      {authScreen==="reset"&&(
+      {authReady&&authScreen==="reset"&&(
         <div className="app" style={{padding:"0 24px 48px"}}>
           <div style={{padding:"56px 0 28px",display:"flex",alignItems:"center",gap:14}}>
             <button className="back" onClick={()=>{setAuthScreen("login");setResetSuccess("");setResetMessage("");}}>← Back</button>
@@ -868,7 +917,7 @@ async function saveEditSession(){
       )}
 
       {/* ── SIGN UP ── */}
-      {authScreen==="signup"&&(
+      {authReady&&authScreen==="signup"&&(
         <div className="app" style={{padding:"0 24px 48px"}}>
           <div style={{padding:"56px 0 28px",display:"flex",alignItems:"center",gap:14}}>
             <button className="back" onClick={()=>setAuthScreen("login")}>← Back</button>
@@ -933,7 +982,7 @@ async function saveEditSession(){
       {/* ── OTP ── */}
       
       {/* ── APP ── */}
-      {authScreen==="app"&&(
+      {authReady&&authScreen==="app"&&(
         <div className="app">
 
           {/* PROFILE */}
@@ -1046,7 +1095,7 @@ async function saveEditSession(){
                     <div className="srow" onClick={()=>setShowTerms(true)}><p style={{fontSize:13,fontWeight:500}}>Terms of Service</p><span style={{color:"#C4B8A8"}}>›</span></div>
                   </div>
                 </div>
-                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){console.error("[Become] Sign out failed",e);}dataClient.resetCache();setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setSyncError("");setJustSignedUp(false);setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
+                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){console.error("[Become] Sign out failed",e);}dataClient.resetCache();setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setSyncError("");setJustSignedUp(false);setAuthScreen("login");setAppTab("home");setView("home");if(window.location.pathname!==pathFromTab("home"))window.history.replaceState({tab:"home"},"",pathFromTab("home"));}}>Sign Out</button>
                 <p style={{fontSize:11,color:"#C4B8A8",textAlign:"center"}}>Become v1.0.0</p>
               </div>
             </div>
@@ -1297,7 +1346,7 @@ async function saveEditSession(){
                 )}
 
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
-                  {openPacks.map((pack,i)=>{
+                  {openPacks.filter(pack=>packSessionCounts(pack).remaining>0).map((pack,i)=>{
                     const p=PALETTE[(pack.palette||0)%PALETTE.length];
                     const {used,total,remaining:rem}=packSessionCounts(pack);
                     const expDays=daysUntil(pack.expiryDate);
@@ -1969,31 +2018,31 @@ async function saveEditSession(){
           {/* NAV */}
           {view==="home"&&(
             <nav className="nav">
-              <button className={`nbtn ${appTab==="home"?"on":""}`} onClick={()=>{setAppTab("home");setView("home");}}>
+              <button type="button" className={`nbtn ${appTab==="home"?"on":""}`} aria-label={t("home_tab")} data-nav-target="home" onClick={()=>goToTab("home")}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill={appTab==="home"?"#B4915F":"none"} stroke={appTab==="home"?"#B4915F":"#C4B8A8"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22" fill="none"/>
                 </svg>
                 <span style={{fontSize:10,fontWeight:600,color:appTab==="home"?"#B4915F":"#C4B8A8"}}>{t("home_tab")}</span>
               </button>
-              <button className={`nbtn ${appTab==="history"?"on":""}`} onClick={()=>{setAppTab("history");setView("home");}}>
+              <button type="button" className={`nbtn ${appTab==="history"?"on":""}`} aria-label={t("history_tab")} data-nav-target="history" onClick={()=>goToTab("history")}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={appTab==="history"?"#B4915F":"#C4B8A8"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                 </svg>
                 <span style={{fontSize:10,fontWeight:600,color:appTab==="history"?"#B4915F":"#C4B8A8"}}>{t("history_tab")}</span>
               </button>
-              <button onClick={()=>setShowAdd(true)}
-                style={{width:50,height:50,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 24px rgba(180,145,95,0.35)"}}>
+              <button type="button" onClick={()=>setShowAdd(true)} aria-label={t("add_new_treatment")} data-nav-target="add"
+                style={{width:50,height:50,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 24px rgba(180,145,95,0.35)",flexShrink:0,position:"relative",zIndex:1}}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FAF7F2" strokeWidth="2.5" strokeLinecap="round">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
               </button>
-              <button className={`nbtn ${appTab==="booking"?"on":""}`} onClick={()=>{setAppTab("booking");setView("home");}}>
+              <button type="button" className={`nbtn ${appTab==="booking"?"on":""}`} aria-label={t("booking_tab")} data-nav-target="booking" onClick={()=>goToTab("booking")}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={appTab==="booking"?"#B4915F":"#C4B8A8"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
                 </svg>
                 <span style={{fontSize:10,fontWeight:600,color:appTab==="booking"?"#B4915F":"#C4B8A8"}}>{t("booking_tab")}</span>
               </button>
-              <button className={`nbtn ${appTab==="profile"?"on":""}`} onClick={()=>{setAppTab("profile");setView("home");}}>
+              <button type="button" className={`nbtn ${appTab==="profile"?"on":""}`} aria-label={t("profile_tab")} data-nav-target="profile" onClick={()=>goToTab("profile")}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={appTab==="profile"?"#B4915F":"#C4B8A8"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
                 </svg>

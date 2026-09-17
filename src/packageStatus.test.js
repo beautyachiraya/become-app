@@ -15,6 +15,7 @@ import {
   listOpenPacks,
   mergeTreatmentsById,
   coerceSessions,
+  isFinishedStatus,
 } from "./packageStatus";
 
 const NOW = new Date("2026-09-16T12:00:00");
@@ -178,6 +179,46 @@ describe("last-session log → Home vs History", () => {
     expect(isOpenPack(usedUpMap, NOW)).toBe(false);
     expect(isHistoryPack(usedUpMap, NOW)).toBe(true);
     expect(listOpenPacks([usedUpMap], NOW)).toEqual([]);
+  });
+
+  it("excludes remaining===0, used_up, and Complete from Home even when the session list is incomplete", () => {
+    const openPaid = pack({
+      id: "open",
+      kind: "paid",
+      totalSessions: 6,
+      expiryDate: "2026-11-01",
+      sessions: [{ id: 1, date: "2026-08-01" }],
+    });
+    const storedZero = pack({
+      id: "stored-zero",
+      totalSessions: 3,
+      remaining: 0,
+      sessions: [],
+    });
+    const completeStatus = pack({
+      id: "complete",
+      status: "Complete",
+      totalSessions: 3,
+      sessions: [{ id: 1 }, { id: 2 }, { id: 3 }],
+    });
+    const usedUpStatus = pack({
+      id: "used-up",
+      status: "used_up",
+      totalSessions: 1,
+      sessions: [],
+    });
+    const home = listOpenPacks([openPaid, storedZero, completeStatus, usedUpStatus], NOW);
+    const history = [openPaid, storedZero, completeStatus, usedUpStatus].filter((p) => isHistoryPack(p, NOW));
+
+    expect(home.map((p) => p.id)).toEqual(["open"]);
+    expect(packSessionCounts(storedZero)).toEqual({ used: 3, total: 3, remaining: 0 });
+    expect(packSessionCounts(completeStatus)).toEqual({ used: 3, total: 3, remaining: 0 });
+    expect(isOpenPack(storedZero, NOW)).toBe(false);
+    expect(isOpenPack(completeStatus, NOW)).toBe(false);
+    expect(isOpenPack(usedUpStatus, NOW)).toBe(false);
+    expect(isFinishedStatus(completeStatus)).toBe(true);
+    expect(isFinishedStatus(usedUpStatus)).toBe(true);
+    expect(history.map((p) => p.id)).toEqual(["stored-zero", "complete", "used-up"]);
   });
 
   it("does not let a stale unused snapshot revive a used-up pack or drop another open pack", () => {
