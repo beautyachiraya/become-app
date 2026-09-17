@@ -10,7 +10,7 @@ function profileSnap(data) {
 function treatmentsSnap(list) {
   return {
     empty: !list.length,
-    docs: list.map((d) => ({ data: () => d })),
+    docs: list.map((d) => ({ id: String(d.id), data: () => d })),
   };
 }
 
@@ -76,6 +76,17 @@ describe("loadUserData", () => {
     const result = await client.loadUserData("uid-1");
     expect(result.profile.name).toBe("Retry");
     expect(getDoc).toHaveBeenCalledTimes(2);
+  });
+
+  it("fills treatment id from the document id when data has no id", async () => {
+    const getDoc = jest.fn().mockResolvedValue(profileSnap({ name: "A" }));
+    const getDocs = jest.fn().mockResolvedValue({
+      empty: false,
+      docs: [{ id: "doc-9", data: () => ({ name: "Botox", sessions: [], totalSessions: 1 }) }],
+    });
+    const client = makeClient({ getDoc, getDocs });
+    const result = await client.loadUserData("uid-1");
+    expect(result.treatments[0].id).toBe("doc-9");
   });
 
   it("fetches again after resetCache (new sign-in lifecycle)", async () => {

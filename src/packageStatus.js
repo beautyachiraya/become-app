@@ -19,10 +19,107 @@ export function daysUntil(date, now = new Date()) {
   return Math.round((new Date(date) - start) / 86400000);
 }
 
+/**
+ * Firestore usually returns sessions as an array, but a map-shaped field
+ * ({0: session}) must still count as logged visits. Missing/null → [].
+ */
+export function coerceSessions(sessions) {
+  if (Array.isArray(sessions)) return sessions.filter(Boolean);
+  if (sessions && typeof sessions === "object") {
+    return Object.keys(sessions)
+      .sort((a, b) => {
+        const na = Number(a);
+        const nb = Number(b);
+        if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+        return String(a).localeCompare(String(b));
+      })
+      .map((key) => sessions[key])
+      .filter(Boolean);
+  }
+  return [];
+}
+
+export function sessionsUsed(treatment) {
+  return coerceSessions(treatment && treatment.sessions).length;
+}
+
 export function sessionsRemaining(treatment) {
   const total = Number(treatment && treatment.totalSessions) || 0;
-  const used = Array.isArray(treatment && treatment.sessions) ? treatment.sessions.length : 0;
-  return Math.max(0, total - used);
+  return Math.max(0, total - sessionsUsed(treatment));
+}
+
+/** Keep LEFT and used/total on the same arithmetic so Home cannot show 0/1 with "1 LEFT". */
+export function packSessionCounts(treatment) {
+  const total = Number(treatment && treatment.totalSessions) || 0;
+  const used = sessionsUsed(treatment);
+  return { used, total, remaining: Math.max(0, total - used) };
+}
+
+export function normalizeTreatment(raw, docId) {
+  const data = raw || {};
+  const id = data.id != null && data.id !== "" ? data.id : docId;
+  const paletteNum = Number(data.palette);
+  return {
+    ...data,
+    ...(id != null && id !== "" ? { id } : {}),
+    totalSessions: Number(data.totalSessions) || 0,
+    sessions: coerceSessions(data.sessions),
+    palette: Number.isFinite(paletteNum) ? paletteNum : 0,
+  };
+}
+
+export function appendSession(treatment, session) {
+  return {
+    ...normalizeTreatment(treatment),
+    sessions: [...coerceSessions(treatment && treatment.sessions), session],
+  };
+}
+
+/** Append a visit onto one pack by id; every other pack is passed through unchanged. */
+export function applySessionLog(treatments, packId, session) {
+  return (treatments || []).map((pack) =>
+    String(pack.id) === String(packId) ? appendSession(pack, session) : pack
+  );
+}
+
+export function listOpenPacks(treatments, now) {
+  return (treatments || [])
+    .filter((pack) => isOpenPack(pack, now))
+    .slice()
+    .sort(compareExpirySoonest);
+}
+
+/**
+ * Merge a Firestore snapshot with in-memory packs.
+ * Prefers the copy with more logged sessions so a stale unused snapshot cannot
+ * revive a used-up pack or drop a locally added still-open pack.
+ */
+export function mergeTreatmentsById(local, loaded) {
+  const byId = new Map();
+  const put = (pack) => {
+    if (!pack || pack.id == null || pack.id === "") return;
+    const id = String(pack.id);
+    const existing = byId.get(id);
+    if (!existing || sessionsUsed(pack) >= sessionsUsed(existing)) {
+      byId.set(id, pack);
+    }
+  };
+  (loaded || []).forEach(put);
+  (local || []).forEach(put);
+  const seen = new Set();
+  const out = [];
+  const pushChosen = (pack) => {
+    if (!pack || pack.id == null || pack.id === "") return;
+    const id = String(pack.id);
+    if (seen.has(id)) return;
+    const chosen = byId.get(id);
+    if (!chosen) return;
+    out.push(chosen);
+    seen.add(id);
+  };
+  (local || []).forEach(pushChosen);
+  (loaded || []).forEach(pushChosen);
+  return out;
 }
 
 export function isExpiredPack(treatment, now) {
@@ -53,8 +150,7 @@ export function isNeedsAttention(treatment, now) {
 /** Attach packageId (treatment.id) onto each redeemed visit. */
 export function sessionsWithPackageId(treatment) {
   const packageId = treatment && treatment.id;
-  const sessions = Array.isArray(treatment && treatment.sessions) ? treatment.sessions : [];
-  return sessions.map((session) => ({ ...session, packageId }));
+  return coerceSessions(treatment && treatment.sessions).map((session) => ({ ...session, packageId }));
 }
 
 /** Missing kind is paid so existing treatments still badge, and promo never collapses into paid. */
@@ -73,7 +169,7 @@ export function compareExpirySoonest(a, b) {
 }
 
 export function lastSessionDate(treatment) {
-  const sessions = Array.isArray(treatment && treatment.sessions) ? treatment.sessions : [];
+  const sessions = coerceSessions(treatment && treatment.sessions);
   let latest = null;
   sessions.forEach((session) => {
     if (!session || !session.date) return;

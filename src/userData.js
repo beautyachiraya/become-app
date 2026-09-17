@@ -27,7 +27,10 @@ export function createDataClient(api) {
         api.getDocs(api.collection(api.db, "users", uid, "treatments")),
       ]).then(([profileSnap, treatmentsSnap]) => ({
         profile: profileSnap.exists() ? profileSnap.data() : null,
-        treatments: treatmentsSnap.empty ? [] : treatmentsSnap.docs.map((d) => d.data()),
+        treatments: treatmentsSnap.empty ? [] : treatmentsSnap.docs.map((d) => {
+          const data = d.data() || {};
+          return { ...data, id: data.id != null && data.id !== "" ? data.id : d.id };
+        }),
       })).catch((err) => {
         if (inFlightPromise === promise) {
           inFlightUid = null;
