@@ -2,15 +2,51 @@
  * Open vs history mapping for the current treatment-card data model.
  *
  * Treatments are the package unit today (not a future ledger).
- *   remaining  = totalSessions - sessions.length
+ *   remaining  = min(total - used, stored remaining) — used-up if any signal is 0
  *   expired    = expiryDate is in the past
- *   open/Home  = remaining > 0 AND not expired
- *   history    = remaining === 0 (used up) OR expired
+ *   open/Home  = remaining > 0 AND not expired AND not a finished status
+ *   history    = remaining === 0 OR used_up/Complete OR expired
  *   kind       = treatment.kind "promo" | "paid" (missing → paid)
  *
  * Promo and paid packs stay separate cards / timeline rows.
  * Never sum remaining across kinds.
  */
+
+const FINISHED_STATUSES = new Set([
+  "used_up",
+  "usedup",
+  "used-up",
+  "used up",
+  "complete",
+  "completed",
+  "done",
+  "finished",
+  "depleted",
+  "exhausted",
+  "closed",
+]);
+
+function finiteNumber(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function firstFinite(...values) {
+  for (let i = 0; i < values.length; i++) {
+    const n = finiteNumber(values[i]);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+function statusToken(value) {
+  return String(value == null ? "" : value)
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
 
 export function daysUntil(date, now = new Date()) {
   if (!date) return null;
@@ -43,16 +79,47 @@ export function sessionsUsed(treatment) {
   return coerceSessions(treatment && treatment.sessions).length;
 }
 
-export function sessionsRemaining(treatment) {
-  const total = Number(treatment && treatment.totalSessions) || 0;
-  return Math.max(0, total - sessionsUsed(treatment));
+/** Stamped used_up / Complete (and equivalents) always leave Home. */
+export function isFinishedStatus(treatment) {
+  if (!treatment) return false;
+  if (treatment.usedUp === true || treatment.complete === true || treatment.completed === true) {
+    return true;
+  }
+  const token = statusToken(treatment.status || treatment.state || treatment.packageStatus);
+  return FINISHED_STATUSES.has(token) || FINISHED_STATUSES.has(token.replace(/\s/g, "_"));
 }
 
-/** Keep LEFT and used/total on the same arithmetic so Home cannot show 0/1 with "1 LEFT". */
+export function sessionsRemaining(treatment) {
+  return packSessionCounts(treatment).remaining;
+}
+
+/**
+ * Keep LEFT and used/total on the same arithmetic so Home cannot show 0/1 with "1 LEFT".
+ * Remaining is the most conservative signal: session list, stored remaining, or a finished status.
+ */
 export function packSessionCounts(treatment) {
-  const total = Number(treatment && treatment.totalSessions) || 0;
-  const used = sessionsUsed(treatment);
-  return { used, total, remaining: Math.max(0, total - used) };
+  const total = firstFinite(
+    treatment && treatment.totalSessions,
+    treatment && treatment.sessionsTotal,
+    treatment && treatment.total
+  ) || 0;
+  const usedFromSessions = sessionsUsed(treatment);
+  const storedUsed = firstFinite(treatment && treatment.used, treatment && treatment.sessionsUsed);
+  const storedRemaining = firstFinite(
+    treatment && treatment.remaining,
+    treatment && treatment.sessionsRemaining,
+    treatment && treatment.left
+  );
+  let used = usedFromSessions;
+  if (storedUsed != null) used = Math.max(used, storedUsed);
+  if (storedRemaining != null && total > 0) used = Math.max(used, total - Math.max(0, storedRemaining));
+  let remaining = Math.max(0, total - used);
+  if (storedRemaining != null) remaining = Math.min(remaining, Math.max(0, storedRemaining));
+  if (isFinishedStatus(treatment)) {
+    remaining = 0;
+    if (total > 0) used = Math.max(used, total);
+  }
+  return { used, total, remaining: Math.max(0, remaining) };
 }
 
 export function normalizeTreatment(raw, docId) {
@@ -127,14 +194,18 @@ export function isExpiredPack(treatment, now) {
   return left !== null && left < 0;
 }
 
-/** Home: still has sessions to use and has not passed expiry. */
+/** Home: still has sessions to use, has not passed expiry, and is not stamped finished. */
 export function isOpenPack(treatment, now) {
-  return sessionsRemaining(treatment) > 0 && !isExpiredPack(treatment, now);
+  if (isFinishedStatus(treatment)) return false;
+  const { remaining } = packSessionCounts(treatment);
+  if (remaining === 0) return false;
+  if (isExpiredPack(treatment, now)) return false;
+  return true;
 }
 
-/** History: used-up (0 left) or expired. */
+/** History: used-up (0 left / Complete / used_up) or expired. Complements Home. */
 export function isHistoryPack(treatment, now) {
-  return sessionsRemaining(treatment) === 0 || isExpiredPack(treatment, now);
+  return !isOpenPack(treatment, now);
 }
 
 /**
