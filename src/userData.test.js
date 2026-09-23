@@ -1,6 +1,7 @@
 import {
   createDataClient,
   formatWriteError,
+  formatVisitWriteError,
   resolveProfilePhotoUrl,
   formatProfilePhotoSaveError,
   isLocalPhotoPreview,
@@ -51,6 +52,45 @@ describe("formatWriteError", () => {
     const spy = jest.spyOn(console, "error").mockImplementation(() => {});
     expect(formatWriteError("Couldn't save your profile", {})).toBe(
       "Couldn't save your profile: Please try again."
+    );
+    spy.mockRestore();
+  });
+});
+
+describe("formatVisitWriteError", () => {
+  it("replaces a Firestore permission denial with plain language", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const err = {
+      code: "permission-denied",
+      message: "Missing or insufficient permissions.",
+    };
+    const message = formatVisitWriteError("Couldn't save this visit", err);
+    expect(message).toBe(
+      "Couldn't save this visit. This account isn't allowed to store visits yet."
+    );
+    expect(message).not.toMatch(/permission-denied/i);
+    expect(message).not.toMatch(/insufficient permissions/i);
+    expect(message).not.toMatch(/firebase/i);
+    expect(spy).toHaveBeenCalledWith("[Become] Couldn't save this visit", err);
+    spy.mockRestore();
+  });
+
+  it("uses the same plain language when an update is denied", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const message = formatVisitWriteError("Couldn't update this visit", {
+      code: "firestore/permission-denied",
+      message: "Missing or insufficient permissions.",
+    });
+    expect(message).toBe(
+      "Couldn't update this visit. This account isn't allowed to store visits yet."
+    );
+    spy.mockRestore();
+  });
+
+  it("keeps other visit failures as the action plus the error detail", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    expect(formatVisitWriteError("Couldn't save this visit", new Error("network down"))).toBe(
+      "Couldn't save this visit: network down"
     );
     spy.mockRestore();
   });

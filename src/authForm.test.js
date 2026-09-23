@@ -8,8 +8,13 @@ import {
   WRONG_CREDENTIALS_ERROR,
   LANDING_HEADLINE,
   LANDING_BULLETS,
+  signupAcceptanceHints,
+  profileFromSignup,
+  ACCEPT_BOTH_HINT,
+  GOOGLE_SIGNUP_HINT,
 } from "./authForm";
 import { PACKAGE_EXPIRY_DAYS, expiryDaysForPack } from "./packageExpiry";
+import { messageChannelForProfile } from "./visits";
 
 describe("validateSignIn", () => {
   it("requires email and password on empty submit", () => {
@@ -105,6 +110,85 @@ describe("landing copy", () => {
     expect(LANDING_BULLETS[0]).toBe("Add a package when you buy one");
     expect(doorstep.toLowerCase()).not.toContain("promo");
     expect(doorstep.toLowerCase()).not.toContain("paid");
+  });
+});
+
+describe("signup acceptance hints", () => {
+  it("stays quiet until someone tries to continue", () => {
+    expect(signupAcceptanceHints({ privacyAccepted: false, termsAccepted: false })).toEqual({
+      google: "",
+      acceptBoth: "",
+    });
+  });
+
+  it("asks to accept both only after Sign Up is tapped", () => {
+    expect(signupAcceptanceHints({
+      attempted: "signup",
+      privacyAccepted: false,
+      termsAccepted: true,
+    })).toEqual({ google: "", acceptBoth: ACCEPT_BOTH_HINT });
+  });
+
+  it("explains Google signup when that button is tapped first", () => {
+    expect(signupAcceptanceHints({
+      attempted: "google",
+      privacyAccepted: false,
+      termsAccepted: false,
+    })).toEqual({ google: GOOGLE_SIGNUP_HINT, acceptBoth: ACCEPT_BOTH_HINT });
+  });
+
+  it("clears both hints once privacy and terms are accepted", () => {
+    expect(signupAcceptanceHints({
+      attempted: "google",
+      privacyAccepted: true,
+      termsAccepted: true,
+    })).toEqual({ google: "", acceptBoth: "" });
+  });
+});
+
+describe("profileFromSignup", () => {
+  it("keeps the chosen country and prefixes the local number", () => {
+    expect(profileFromSignup({
+      name: "Sophia",
+      email: " sophia@email.com ",
+      phone: "89 123 4567",
+      countryCode: "+66 TH",
+    })).toEqual({
+      name: "Sophia",
+      email: "sophia@email.com",
+      phone: "+66 89 123 4567",
+      countryCode: "+66 TH",
+    });
+  });
+
+  it("does not add the dial code twice, and still stores a UAE country with no number", () => {
+    expect(profileFromSignup({
+      name: "Noura",
+      email: "noura@email.com",
+      phone: "+971 50 123 4567",
+      countryCode: "+971 AE",
+    }).phone).toBe("+971 50 123 4567");
+    expect(profileFromSignup({
+      name: "Noura",
+      email: "noura@email.com",
+      phone: "",
+      countryCode: "+971 AE",
+    })).toEqual({
+      name: "Noura",
+      email: "noura@email.com",
+      phone: "",
+      countryCode: "+971 AE",
+    });
+  });
+
+  it("lets a saved UAE country choose WhatsApp even when currency is still THB", () => {
+    const profile = profileFromSignup({
+      name: "Noura",
+      email: "noura@email.com",
+      phone: "50 123 4567",
+      countryCode: "+971 AE",
+    });
+    expect(messageChannelForProfile(profile, "THB — Thai Baht ฿").channel).toBe("whatsapp");
   });
 });
 

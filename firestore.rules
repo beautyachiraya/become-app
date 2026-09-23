@@ -1,0 +1,34 @@
+rules_version = '2';
+// NOT DEPLOYED.
+// Achiraya: this file is only a note for the Firebase console. The Become
+// repo does not deploy Firestore rules, and merging this pull request does
+// not publish them. Open project become-app-dde78 → Firestore → Rules, add
+// the visits block below next to the existing treatments rule, and press
+// Publish there.
+//
+// If the console rules already allow the signed-in user to read and write
+// users/{uid}/treatments/{treatmentId}, give users/{uid}/visits/{visitId}
+// the same check. The blocks below are that intended mirror. Do not replace
+// a larger console ruleset with this file unless those other paths are
+// already covered — publishing a shorter file would remove them.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Mirror of the treatments rule already expected in the console.
+    match /users/{uid}/treatments/{treatmentId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /users/{uid}/profile/{docId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Add this. Same owner check as treatments.
+    match /users/{uid}/visits/{visitId} {
+      allow read, write: if isOwner(uid);
+    }
+  }
+}
