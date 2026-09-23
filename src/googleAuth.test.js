@@ -6,6 +6,7 @@ import {
   resolveAuthDomain,
   prefersGoogleRedirect,
   shouldPrimeGooglePopup,
+  redirectFallbackAllowed,
   beginGooglePopupGesture,
   hadPendingGoogleRedirect,
   firebasePendingRedirectKey,
@@ -107,6 +108,23 @@ describe("shouldPrimeGooglePopup", () => {
       maxTouchPoints: 0,
     })).toBe(false);
     expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI, standalone: true })).toBe(false);
+  });
+});
+
+describe("redirectFallbackAllowed", () => {
+  it("does not start a redirect after a failed popup on iPhone or Android", () => {
+    expect(redirectFallbackAllowed({ userAgent: IPHONE_SAFARI })).toBe(false);
+    expect(redirectFallbackAllowed({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+      platform: "MacIntel",
+      maxTouchPoints: 5,
+    })).toBe(false);
+    expect(redirectFallbackAllowed({ userAgent: ANDROID_CHROME })).toBe(false);
+    expect(redirectFallbackAllowed({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    })).toBe(true);
   });
 });
 
@@ -358,6 +376,26 @@ describe("startGoogleSignIn", () => {
     expect(shouldFallbackToRedirect(new Error("popup closed"))).toBe(false);
     expect(outcome).toEqual({ status: "redirecting" });
     expect(signInWithRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not turn a blocked iPhone popup into a redirect that cannot finish", async () => {
+    const storage = memoryStorage();
+    const blocked = Object.assign(new Error("blocked"), { code: "auth/popup-blocked" });
+    const signInWithRedirect = jest.fn(() => Promise.resolve());
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      allowRedirectFallback: false,
+      storage,
+      signInWithPopup: jest.fn(() => Promise.reject(blocked)),
+      signInWithRedirect,
+    });
+    expect(outcome).toEqual({ status: "error", error: blocked });
+    expect(signInWithRedirect).not.toHaveBeenCalled();
+    expect(peekGoogleRedirectIntent(storage)).toBe("");
   });
 
   it("does not redirect when the person closes the popup", async () => {

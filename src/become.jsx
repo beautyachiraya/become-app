@@ -3,7 +3,7 @@ import { auth, googleRedirectAuth, firebaseApiKey, db, storage } from "./firebas
 import { signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signOut, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import {
-  prefersGoogleRedirect, shouldPrimeGooglePopup, beginGooglePopupGesture, readGoogleRedirectEnv,
+  prefersGoogleRedirect, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
   browserSessionStorage, peekGoogleRedirectIntent, takeGoogleRedirectIntent, clearGoogleRedirectIntent,
   hadPendingGoogleRedirect, readPageNavigationType, startGoogleSignIn, loadGoogleRedirectResult,
   adoptRedirectUser, googleRedirectOutcome, profileFromGoogleUser, GOOGLE_REDIRECT_INCOMPLETE,
@@ -572,6 +572,7 @@ export default function Become(){
         provider:googleProvider,
         fromSignup,
         useRedirect,
+        allowRedirectFallback:redirectFallbackAllowed(env),
         storage:browserSessionStorage(),
         signInWithPopup,
         signInWithRedirect,

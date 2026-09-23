@@ -89,6 +89,18 @@ export function shouldPrimeGooglePopup(env) {
 }
 
 /**
+ * A failed popup must not start a full-page redirect on these phones.
+ * The credential would be left on the Firebase auth domain, the return would
+ * have no user, and the login screen would show "didn't finish".
+ */
+export function redirectFallbackAllowed(env) {
+  const source = env || {};
+  if (isIOSDevice(source)) return false;
+  if (/Android/i.test(source.userAgent || "")) return false;
+  return true;
+}
+
+/**
  * Open the Google window during the tap, then let Firebase navigate it.
  * Returns a function that closes the window if Firebase never used it.
  */
@@ -259,7 +271,9 @@ export function shouldFallbackToRedirect(error) {
 }
 
 /**
- * Popup on desktop. Redirect on mobile, and when the browser blocks the popup.
+ * Popup on desktop and on iPhone/Android browsers. Redirect only where a popup
+ * cannot report back. A blocked popup on a phone must not fall through to
+ * redirect: that return is what shows "didn't finish".
  * `redirectAuth` uses the Firebase auth domain and may be the same instance as
  * `popupAuth`. Email and password stay on `popupAuth`.
  */
@@ -269,6 +283,7 @@ export async function startGoogleSignIn({
   provider,
   fromSignup,
   useRedirect,
+  allowRedirectFallback,
   storage,
   signInWithPopup,
   signInWithRedirect,
@@ -287,7 +302,9 @@ export async function startGoogleSignIn({
     const result = await signInWithPopup(popupAuth, provider);
     return { status: "success", user: result && result.user };
   } catch (error) {
-    if (!shouldFallbackToRedirect(error)) return { status: "error", error };
+    if (allowRedirectFallback === false || !shouldFallbackToRedirect(error)) {
+      return { status: "error", error };
+    }
     rememberGoogleRedirectIntent(storage, fromSignup);
     try {
       await signInWithRedirect(redirectAuth, provider);
