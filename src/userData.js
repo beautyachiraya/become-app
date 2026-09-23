@@ -128,5 +128,26 @@ export function createDataClient(api) {
     async writeProfile(uid, data, options = { merge: true }) {
       await api.setDoc(api.doc(api.db, "users", uid, "profile", "info"), data, options);
     },
+
+    async loadVisits(uid) {
+      if (!uid) return Promise.reject(new Error("Missing user id"));
+      const snap = await api.getDocs(api.collection(api.db, "users", uid, "visits"));
+      if (!snap || snap.empty) return [];
+      return snap.docs.map((d) => {
+        const data = (d.data && d.data()) || {};
+        return { ...data, id: data.id != null && data.id !== "" ? data.id : d.id };
+      });
+    },
+
+    async writeVisit(uid, visit) {
+      const payload = {};
+      Object.keys(visit || {}).forEach((key) => {
+        if (visit[key] !== undefined) payload[key] = visit[key];
+      });
+      await api.setDoc(
+        api.doc(api.db, "users", uid, "visits", String(visit.id)),
+        payload
+      );
+    },
   };
 }

@@ -272,4 +272,25 @@ describe("write helpers", () => {
     const client = makeClient({ deleteDoc });
     await expect(client.deleteTreatment("uid-1", 3)).rejects.toThrow("not-found");
   });
+
+  it("loads visits from the user's visits collection", async () => {
+    const getDocs = jest.fn().mockResolvedValue({
+      empty: false,
+      docs: [{ id: "v1", data: () => ({ status: "planned", packageId: "p1" }) }],
+    });
+    const client = makeClient({ getDocs });
+    const visits = await client.loadVisits("uid-1");
+    expect(getDocs).toHaveBeenCalledWith("users/uid-1/visits");
+    expect(visits).toEqual([{ status: "planned", packageId: "p1", id: "v1" }]);
+  });
+
+  it("writes a visit without undefined fields", async () => {
+    const setDoc = jest.fn().mockResolvedValue();
+    const client = makeClient({ setDoc });
+    await client.writeVisit("uid-1", { id: "v1", status: "planned", remindAt: undefined, notes: "Morning" });
+    expect(setDoc).toHaveBeenCalledWith(
+      "users/uid-1/visits/v1",
+      { id: "v1", status: "planned", notes: "Morning" }
+    );
+  });
 });

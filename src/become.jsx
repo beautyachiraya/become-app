@@ -14,6 +14,9 @@ import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHis
 import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment, explicitPackKind } from "./treatmentForm";
 import TreatmentFormFields from "./TreatmentFormFields";
 import { JournalHomeCard, JournalDetailStats, JournalVisitList } from "./journalUi";
+import { BookingScreen } from "./BookingScreen";
+import { BOOKING_COPY } from "./bookingCopy";
+import { normalizeVisit, completeVisit, cancelVisit, withClinicContact, messageChannelForProfile, splitPlannedAt } from "./visits";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
 
@@ -90,9 +93,6 @@ const T = {
     history_empty_title: "Nothing in History yet.",
     history_empty_sub: "When a package is used up or expires, it lands here. Journal visits show up here too — the journal itself stays on Home.",
     booking_title: "Booking",
-    booking_lede: "Clinic appointments, in one calm place.",
-    booking_coming_soon: "Booking — coming soon",
-    booking_empty_sub: "You'll be able to book and see upcoming visits here. Packages stay on Home for now.",
     used_up: "Used up",
     expired: "Expired",
     promo: "Promo",
@@ -118,6 +118,7 @@ const T = {
     whenever_i_go: "Whenever I go",
     journal_add_sub: "A diary of visits — no session count, no expiry.",
     edit_journal_sub: "Update your journal",
+    ...BOOKING_COPY.en,
   },
   th: {
     until_treatment: "อีกนิดก็ถึงเวลาแล้ว",
@@ -140,9 +141,6 @@ const T = {
     history_empty_title: "ยังไม่มีประวัติ",
     history_empty_sub: "เมื่อแพ็กเกจใช้ครบหรือหมดอายุ จะแสดงที่นี่ บันทึกการไปก็อยู่ที่นี่เช่นกัน — ตัวบันทึกยังอยู่ที่หน้าหลัก",
     booking_title: "จองคิว",
-    booking_lede: "นัดคลินิกทั้งหมด ในที่เดียว",
-    booking_coming_soon: "จองคิว — เร็วๆ นี้",
-    booking_empty_sub: "เร็วๆ นี้จะจองและดูนัดได้ที่นี่ ตอนนี้แพ็กเกจยังอยู่ที่หน้าหลัก",
     used_up: "ใช้ครบแล้ว",
     expired: "หมดอายุ",
     promo: "โปรโมชัน",
@@ -168,6 +166,7 @@ const T = {
     whenever_i_go: "เมื่อไรก็ได้",
     journal_add_sub: "ไดอารี่การไปรับบริการ — ไม่มีจำนวนเซสชัน ไม่มีวันหมดอายุ",
     edit_journal_sub: "แก้ไขบันทึกของคุณ",
+    ...BOOKING_COPY.th,
   },
 };
 const CURRENCIES = ["THB — Thai Baht ฿","USD — US Dollar $","AED — UAE Dirham د.إ"];
@@ -369,6 +368,8 @@ export default function Become(){
   const otpRefs=[oR0,oR1,oR2,oR3,oR4];
 
   const [treatments,setTreatments]=useState([]);
+  const [visits,setVisits]=useState([]);
+  const [visitsReady,setVisitsReady]=useState(false);
   const treatmentsRef=useRef(treatments);
   treatmentsRef.current=treatments;
   const [appTab,setAppTab]=useState("home");
@@ -495,6 +496,23 @@ export default function Become(){
     }).catch(e=>{
       if(cancelled)return;
       showWriteError("Couldn't load your profile", e);
+    });
+    return()=>{cancelled=true;};
+  },[authScreen]);
+  useEffect(()=>{
+    if(authScreen!=="app")return;
+    const user=auth.currentUser;
+    if(!user){setVisitsReady(true);return;}
+    let cancelled=false;
+    setVisitsReady(false);
+    dataClient.loadVisits(user.uid).then((loaded)=>{
+      if(cancelled)return;
+      setVisits((loaded||[]).map((v)=>normalizeVisit(v)));
+      setVisitsReady(true);
+    }).catch((e)=>{
+      if(cancelled)return;
+      setVisitsReady(true);
+      showWriteError("Couldn't load your visits", e);
     });
     return()=>{cancelled=true;};
   },[authScreen]);
@@ -781,6 +799,100 @@ async function saveEditSession(){
     const message=formatProfilePhotoSaveError(error);
     setSyncError(message);
     alert(message);
+  }
+  async function savePlannedVisit(visit){
+    const user=auth.currentUser;
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeVisit(user.uid,visit);
+      setVisits(prev=>{
+        const exists=prev.some(v=>String(v.id)===String(visit.id));
+        if(!exists)return [...prev,visit];
+        return prev.map(v=>String(v.id)===String(visit.id)?visit:v);
+      });
+      if(visit.bookingUrl){
+        const pack=(treatmentsRef.current||[]).find(t=>String(t.id)===String(visit.packageId));
+        if(pack&&pack.bookingUrl!==visit.bookingUrl){
+          const updated={...pack,bookingUrl:visit.bookingUrl};
+          try{
+            if(user)await dataClient.writeTreatment(user.uid,updated);
+            setTreatments(prev=>prev.map(t=>String(t.id)===String(pack.id)?updated:t));
+          }catch(err){
+            showWriteError("Couldn't save the clinic link on this package", err);
+          }
+        }
+      }
+      setSyncError("");
+      return true;
+    }catch(e){
+      showWriteError("Couldn't save this visit", e);
+      return false;
+    }finally{
+      setIsSaving(false);
+    }
+  }
+  async function cancelPlannedVisit(visit){
+    const next=cancelVisit(visit);
+    const user=auth.currentUser;
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeVisit(user.uid,next);
+      setVisits(prev=>prev.map(v=>String(v.id)===String(next.id)?next:v));
+      setSyncError("");
+      return true;
+    }catch(e){
+      showWriteError("Couldn't cancel this visit", e);
+      return false;
+    }finally{
+      setIsSaving(false);
+    }
+  }
+  async function completePlannedVisit(visit){
+    const pack=(treatmentsRef.current||[]).find(t=>String(t.id)===String(visit.packageId));
+    if(!pack){
+      showWriteError("Couldn't open Log Session", new Error("That package is no longer in your list."));
+      return false;
+    }
+    const next=completeVisit(visit);
+    const user=auth.currentUser;
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeVisit(user.uid,next);
+      setVisits(prev=>prev.map(v=>String(v.id)===String(next.id)?next:v));
+      const parts=splitPlannedAt(next.plannedAt);
+      setSelectedId(pack.id);
+      setLogTargetIdx(null);
+      setLogForm({date:parts.date||new Date().toISOString().split("T")[0],note:"",photo:null});
+      setShowLog(true);
+      setSyncError("");
+      return true;
+    }catch(e){
+      showWriteError("Couldn't update this visit", e);
+      return false;
+    }finally{
+      setIsSaving(false);
+    }
+  }
+  async function saveClinicContact(packageId,contact){
+    const pack=(treatmentsRef.current||[]).find(t=>String(t.id)===String(packageId));
+    if(!pack){
+      showWriteError("Couldn't save this clinic contact", new Error("That package is no longer in your list."));
+      return false;
+    }
+    const updated=withClinicContact(pack,contact);
+    const user=auth.currentUser;
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeTreatment(user.uid,updated);
+      setTreatments(prev=>prev.map(t=>String(t.id)===String(pack.id)?updated:t));
+      setSyncError("");
+      return true;
+    }catch(e){
+      showWriteError("Couldn't save this clinic contact", e);
+      return false;
+    }finally{
+      setIsSaving(false);
+    }
   }
   async function uploadProfilePhoto(file){
     if(!file)return;
@@ -1181,7 +1293,7 @@ async function saveEditSession(){
                     <div className="srow" onClick={()=>setShowTerms(true)}><p style={{fontSize:13,fontWeight:500}}>Terms of Service</p><span style={{color:"#C4B8A8"}}>›</span></div>
                   </div>
                 </div>
-                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){console.error("[Become] Sign out failed",e);}dataClient.resetCache();setTreatments([]);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setSyncError("");setJustSignedUp(false);setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
+                <button className="btn btn-g" onClick={async()=>{try{const {signOut}=await import("firebase/auth");await signOut(auth);}catch(e){console.error("[Become] Sign out failed",e);}dataClient.resetCache();setTreatments([]);setVisits([]);setVisitsReady(false);setProfileForm({name:"",email:"",phone:""});setProfilePhoto(null);setSyncError("");setJustSignedUp(false);setAuthScreen("login");setAppTab("home");setView("home");}}>Sign Out</button>
                 <p style={{fontSize:11,color:"#C4B8A8",textAlign:"center"}}>Become v1.0.0</p>
               </div>
             </div>
@@ -1609,26 +1721,26 @@ async function saveEditSession(){
             </div>
           )}
 
-          {/* BOOKING — stub until the appointment flow is wired */}
+          {/* BOOKING — a self-logged visit, not a clinic reservation */}
           {appTab==="booking"&&view==="home"&&(
-            <div style={{paddingBottom:100}}>
-              <div style={{background:"linear-gradient(160deg,#EDE5D8,#F5EFE6,#FAF7F2)",padding:"calc(60px + env(safe-area-inset-top)) 24px 28px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.12)"}}>
-                <p style={{fontSize:11,color:"#B4915F",fontWeight:600,letterSpacing:2.5,textTransform:"uppercase",marginBottom:10}}>{t("booking_tab")}</p>
-                <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:36,fontWeight:300,lineHeight:1.1}}>{t("booking_title")}</h1>
-                <p style={{fontSize:13,color:"#9A8A78",marginTop:10,maxWidth:300,lineHeight:1.55}}>{t("booking_lede")}</p>
-              </div>
-              <div style={{padding:"20px 20px 0"}}>
-                <div className="card" style={{padding:"52px 24px",textAlign:"center"}}>
-                  <div style={{width:52,height:52,borderRadius:14,background:"#F5EFE6",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px"}}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B4915F" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-                    </svg>
-                  </div>
-                  <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:300,color:"#9A8A78",fontStyle:"italic",marginBottom:8}}>{t("booking_coming_soon")}</p>
-                  <p style={{fontSize:13,color:"#C4B8A8",lineHeight:1.55}}>{t("booking_empty_sub")}</p>
-                </div>
-              </div>
-            </div>
+            <BookingScreen
+              t={t}
+              locale={language==="Thai — ภาษาไทย"?"th":"en"}
+              openPacks={openPacks}
+              treatments={treatments}
+              visits={visits}
+              visitsReady={visitsReady}
+              profile={profileForm}
+              channel={messageChannelForProfile(profileForm, currency).channel}
+              isSaving={isSaving}
+              onSaveVisit={savePlannedVisit}
+              onCancelVisit={cancelPlannedVisit}
+              onCompleteVisit={completePlannedVisit}
+              onSaveContact={saveClinicContact}
+              onAddTreatment={()=>setShowAdd(true)}
+              iconFor={(name)=>TREATMENT_ICONS[name]||"✧"}
+              paletteFor={(pack)=>PALETTE[((pack&&pack.palette)||0)%PALETTE.length]}
+            />
           )}
 
           {/* DETAIL */}
