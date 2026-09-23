@@ -15,10 +15,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app); export const db = getFirestore(app); export const storage = getStorage(app);
 
-// Mobile Google redirect uses the live host as authDomain so the /__/auth helper
-// is same-origin (vercel.json proxies it). Email/password and desktop popup stay on `auth`.
-const pageHost = typeof window !== "undefined" && window.location ? window.location.hostname : "";
-const redirectDomain = resolveAuthDomain(pageHost);
+// Google redirect uses the Firebase auth domain on every host, including the live
+// site, so this is the same Auth instance as email/password and the desktop popup.
+const redirectDomain = resolveAuthDomain(
+  typeof window !== "undefined" && window.location ? window.location.hostname : ""
+);
 export const googleRedirectAuth = redirectDomain === FIREBASE_AUTH_DOMAIN
   ? auth
   : getAuth(initializeApp({ ...firebaseConfig, authDomain: redirectDomain }, "google-redirect"));

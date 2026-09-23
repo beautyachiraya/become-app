@@ -2,7 +2,7 @@
 
 export const FIREBASE_AUTH_DOMAIN = "become-app-dde78.firebaseapp.com";
 
-/** Live site. Same-origin auth handler is proxied here (see vercel.json). */
+/** Live site. Redirect sign-in does not use this host as authDomain. */
 export const PRODUCTION_APP_HOST = "become-app-rho.vercel.app";
 
 export const GOOGLE_REDIRECT_INTENT_KEY = "become.googleRedirectIntent";
@@ -11,13 +11,15 @@ export const GOOGLE_REDIRECT_INCOMPLETE =
   "Google sign-in didn't finish. Please try again.";
 
 /**
- * On the live host, Google redirect must use that host as authDomain so the
- * handler iframe is same-origin. Safari and Chrome block the default
- * firebaseapp.com helper. Other hosts stay on the Firebase domain so local
- * popup sign-in and preview URLs keep working.
+ * Google redirect always uses the Firebase auth domain, including on the live
+ * site. Using the Vercel host as authDomain stopped Chromium — a desktop window
+ * with an iPhone user agent sat on Connecting, then a network error, and never
+ * left for Google. The firebaseapp.com handler is already authorized and reaches
+ * the account picker. `hostname` is accepted so callers can pass the page host
+ * without choosing a domain themselves.
  */
 export function resolveAuthDomain(hostname) {
-  if (hostname === PRODUCTION_APP_HOST) return PRODUCTION_APP_HOST;
+  void hostname;
   return FIREBASE_AUTH_DOMAIN;
 }
 
@@ -147,8 +149,8 @@ export function shouldFallbackToRedirect(error) {
 
 /**
  * Popup on desktop. Redirect on mobile, and when the browser blocks the popup.
- * `redirectAuth` may be a second Firebase Auth instance whose authDomain is the
- * live site; `popupAuth` stays on the default app so email/password is untouched.
+ * `redirectAuth` uses the Firebase auth domain and may be the same instance as
+ * `popupAuth`. Email and password stay on `popupAuth`.
  */
 export async function startGoogleSignIn({
   popupAuth,

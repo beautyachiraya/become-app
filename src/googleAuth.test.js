@@ -34,8 +34,8 @@ function memoryStorage(initial) {
 }
 
 describe("resolveAuthDomain", () => {
-  it("uses the live host only for the production site", () => {
-    expect(resolveAuthDomain(PRODUCTION_APP_HOST)).toBe(PRODUCTION_APP_HOST);
+  it("uses the Firebase auth domain on every host, including the live site", () => {
+    expect(resolveAuthDomain(PRODUCTION_APP_HOST)).toBe(FIREBASE_AUTH_DOMAIN);
     expect(resolveAuthDomain("localhost")).toBe(FIREBASE_AUTH_DOMAIN);
     expect(resolveAuthDomain("become-app-git-preview.vercel.app")).toBe(FIREBASE_AUTH_DOMAIN);
     expect(resolveAuthDomain("")).toBe(FIREBASE_AUTH_DOMAIN);
