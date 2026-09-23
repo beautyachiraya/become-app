@@ -30,9 +30,21 @@ export function readGoogleRedirectEnv(nav) {
   };
 }
 
-/** Popups are blocked or dropped in mobile browsers and in-app webviews. */
+function narrowViewportPrefersRedirect(env) {
+  if (env && env.narrowViewport === true) return true;
+  if (env && env.narrowViewport === false) return false;
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  try {
+    return !!window.matchMedia("(max-width: 768px)").matches;
+  } catch (err) {
+    return false;
+  }
+}
+
+/** Popups fail on phones, in-app browsers, and phone-width windows. */
 export function prefersGoogleRedirect(env) {
   const source = env || {};
+  if (narrowViewportPrefersRedirect(source)) return true;
   const userAgent = source.userAgent || "";
   const platform = source.platform || "";
   const maxTouchPoints = source.maxTouchPoints || 0;
@@ -120,7 +132,17 @@ export function googleRedirectOutcome(result, intent) {
 
 export function shouldFallbackToRedirect(error) {
   const code = error && error.code;
-  return code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment";
+  if (
+    code === "auth/popup-blocked" ||
+    code === "auth/operation-not-supported-in-this-environment" ||
+    code === "auth/network-request-failed" ||
+    code === "auth/internal-error" ||
+    code === "auth/cancelled-popup-request"
+  ) {
+    return true;
+  }
+  const message = error && error.message ? String(error.message) : "";
+  return /network/i.test(message);
 }
 
 /**
