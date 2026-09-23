@@ -44,6 +44,16 @@ export function buildNewTreatment(form, { id, palette } = {}) {
   };
 }
 
+/**
+ * A label is shown only when Firestore already stored promo or paid.
+ * A missing kind stays unlabeled so a new package is not presented as paid.
+ */
+export function explicitPackKind(treatment) {
+  const kind = treatment && treatment.kind;
+  if (kind === "promo" || kind === "paid") return kind;
+  return "";
+}
+
 /** Edit keeps any stored kind or source. The form no longer asks for either. */
 export function buildEditedTreatment(existing, form) {
   return {

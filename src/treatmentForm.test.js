@@ -4,6 +4,7 @@ import {
   emptyTreatmentForm,
   buildNewTreatment,
   buildEditedTreatment,
+  explicitPackKind,
 } from "./treatmentForm";
 
 const FREQUENCIES = [
@@ -91,6 +92,16 @@ describe("new package writes", () => {
     );
     expect(created.name).toBe("Sculptra");
     expect(created.frequency).toBe(45);
+  });
+});
+
+describe("stored package labels", () => {
+  it("labels only an explicit promo or paid kind", () => {
+    expect(explicitPackKind({ kind: "promo" })).toBe("promo");
+    expect(explicitPackKind({ kind: "paid" })).toBe("paid");
+    expect(explicitPackKind({})).toBe("");
+    expect(explicitPackKind({ kind: "standard" })).toBe("");
+    expect(explicitPackKind({ source: "promo" })).toBe("");
   });
 });
 

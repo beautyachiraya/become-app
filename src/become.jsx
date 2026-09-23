@@ -3,8 +3,8 @@ import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDo
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import { createDataClient, formatWriteError } from "./userData";
-import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, packKind, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment } from "./packageStatus";
-import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment } from "./treatmentForm";
+import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment } from "./packageStatus";
+import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment, explicitPackKind } from "./treatmentForm";
 import TreatmentFormFields from "./TreatmentFormFields";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
@@ -1283,6 +1283,7 @@ async function saveEditSession(){
                     const expDays=daysUntil(pack.expiryDate);
                     const next=getNext(pack);
                     const sortedS=coerceSessions(pack.sessions).slice().sort((a,b)=>new Date(a.date)-new Date(b.date));
+                    const storedKind=explicitPackKind(pack);
                     return(
                       <div key={pack.id} className={`tcard pop p${Math.min(i+3,5)}`} style={{padding:"22px 20px"}} onClick={()=>goToDetail(pack.id)}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
@@ -1294,7 +1295,7 @@ async function saveEditSession(){
                               <p style={{fontSize:15,fontWeight:600,marginBottom:2}}>{pack.name}</p>
                               <p style={{fontSize:12,color:"#9A8A78"}}>{pack.clinic}</p>
                               {pack.brandUnit&&<p style={{fontSize:11,color:"#B4915F",fontWeight:500,marginTop:2}}>{pack.brandUnit}</p>}
-                              <span className={`pill ${packKind(pack)==="promo"?"pill-promo":"pill-paid"}`} style={{marginTop:6}}>{packKind(pack)==="promo"?t("promo"):t("paid")}</span>
+                              {storedKind&&<span className={`pill ${storedKind==="promo"?"pill-promo":"pill-paid"}`} style={{marginTop:6}}>{t(storedKind)}</span>}
                               {pack.notes&&<p style={{fontSize:11,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{pack.notes}</p>}
                             </div>
                           </div>
@@ -1377,7 +1378,7 @@ async function saveEditSession(){
                   {historyItems.map((item)=>{
                     const pack=item.pack;
                     const p=PALETTE[(pack.palette||0)%PALETTE.length];
-                    const kind=item.kind==="promo"?"promo":"paid";
+                    const storedKind=explicitPackKind(pack);
                     if(item.type==="pack"){
                       return(
                         <div key={item.id} className="tcard" style={{padding:"18px 18px"}} onClick={()=>goToDetail(pack.id)}>
@@ -1391,7 +1392,7 @@ async function saveEditSession(){
                                 <p style={{fontSize:15,fontWeight:600,marginBottom:2}}>{pack.name}</p>
                                 <p style={{fontSize:12,color:"#9A8A78"}}>{pack.clinic}</p>
                                 <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
-                                  <span className={`pill ${kind==="promo"?"pill-promo":"pill-paid"}`}>{t(kind)}</span>
+                                  {storedKind&&<span className={`pill ${storedKind==="promo"?"pill-promo":"pill-paid"}`}>{t(storedKind)}</span>}
                                   {item.expired&&<span className="pill pill-danger">{t("expired")}</span>}
                                   {item.usedUp&&<span className="pill pill-done">{t("used_up")}</span>}
                                 </div>
@@ -1418,7 +1419,7 @@ async function saveEditSession(){
                             <p style={{fontSize:12,color:"#9A8A78",marginTop:2}}>{t("completed_session")} · {pack.clinic}</p>
                             {item.session&&item.session.note&&<p style={{fontSize:12,color:"#7A6A58",marginTop:6}}>{item.session.note}</p>}
                           </div>
-                          <span className={`pill ${kind==="promo"?"pill-promo":"pill-paid"}`}>{t(kind)}</span>
+                          {storedKind&&<span className={`pill ${storedKind==="promo"?"pill-promo":"pill-paid"}`}>{t(storedKind)}</span>}
                         </div>
                       </div>
                     );
