@@ -1,13 +1,21 @@
 /**
- * Open vs history mapping for the current treatment-card data model.
+ * Open vs history mapping for treatment cards.
  *
- * Treatments are the package unit today (not a future ledger).
+ * trackMode "journal" is a no-expiry diary. It stays on Home until removed.
+ * Missing trackMode behaves as a package.
+ *
+ * Packages:
  *   remaining  = totalSessions - sessions.length
  *   expired    = expiryDate is in the past
  *   open/Home  = remaining > 0 AND not expired
  *   history    = remaining === 0 (used up) OR expired
- *   kind       = treatment.kind "promo" | "paid" (missing → paid)
  *
+ * Journals:
+ *   sessionsTotal / sessionsRemaining / expiresAt stay null
+ *   open/Home      = status is not "removed"
+ *   history        = logged visits only — the journal card is not "used up"
+ *
+ * kind = treatment.kind "promo" | "paid" (missing → paid) for packages that stored it.
  * Promo and paid packs stay separate cards / timeline rows.
  * Never sum remaining across kinds.
  */
@@ -43,15 +51,22 @@ export function sessionsUsed(treatment) {
   return coerceSessions(treatment && treatment.sessions).length;
 }
 
+/** Diary track. Anything else, including a missing trackMode, is a package. */
+export function isJournal(treatment) {
+  return Boolean(treatment && treatment.trackMode === "journal");
+}
+
 export function sessionsRemaining(treatment) {
+  if (isJournal(treatment)) return null;
   const total = Number(treatment && treatment.totalSessions) || 0;
   return Math.max(0, total - sessionsUsed(treatment));
 }
 
 /** Keep LEFT and used/total on the same arithmetic so Home cannot show 0/1 with "1 LEFT". */
 export function packSessionCounts(treatment) {
-  const total = Number(treatment && treatment.totalSessions) || 0;
   const used = sessionsUsed(treatment);
+  if (isJournal(treatment)) return { used, total: null, remaining: null };
+  const total = Number(treatment && treatment.totalSessions) || 0;
   return { used, total, remaining: Math.max(0, total - used) };
 }
 
@@ -59,20 +74,45 @@ export function normalizeTreatment(raw, docId) {
   const data = raw || {};
   const id = data.id != null && data.id !== "" ? data.id : docId;
   const paletteNum = Number(data.palette);
-  return {
+  const journal = data.trackMode === "journal";
+  const next = {
     ...data,
     ...(id != null && id !== "" ? { id } : {}),
-    totalSessions: Number(data.totalSessions) || 0,
+    totalSessions: journal ? null : (Number(data.totalSessions) || 0),
     sessions: coerceSessions(data.sessions),
     palette: Number.isFinite(paletteNum) ? paletteNum : 0,
   };
+  if (journal) {
+    next.sessionsTotal = null;
+    next.sessionsRemaining = null;
+    next.expiryDate = null;
+    next.expiresAt = null;
+    next.status = data.status === "removed" ? "removed" : "active";
+  }
+  return next;
 }
 
 export function appendSession(treatment, session) {
-  return {
-    ...normalizeTreatment(treatment),
-    sessions: [...coerceSessions(treatment && treatment.sessions), session],
+  const base = normalizeTreatment(treatment);
+  const visit = {
+    ...(session || {}),
+    packageId: session && session.packageId != null && session.packageId !== ""
+      ? session.packageId
+      : base.id,
   };
+  const next = {
+    ...base,
+    sessions: [...coerceSessions(base.sessions), visit],
+  };
+  if (isJournal(base)) {
+    next.totalSessions = null;
+    next.sessionsTotal = null;
+    next.sessionsRemaining = null;
+    next.expiryDate = null;
+    next.expiresAt = null;
+    next.status = base.status === "removed" ? "removed" : "active";
+  }
+  return next;
 }
 
 /** Append a visit onto one pack by id; every other pack is passed through unchanged. */
@@ -123,17 +163,20 @@ export function mergeTreatmentsById(local, loaded) {
 }
 
 export function isExpiredPack(treatment, now) {
+  if (isJournal(treatment)) return false;
   const left = daysUntil(treatment && treatment.expiryDate, now);
   return left !== null && left < 0;
 }
 
-/** Home: still has sessions to use and has not passed expiry. */
+/** Home: journal stays until removed; a package still has sessions and has not expired. */
 export function isOpenPack(treatment, now) {
+  if (isJournal(treatment)) return treatment.status !== "removed";
   return sessionsRemaining(treatment) > 0 && !isExpiredPack(treatment, now);
 }
 
-/** History: used-up (0 left) or expired. */
+/** History packs are used-up or expired packages. A journal is never "used up". */
 export function isHistoryPack(treatment, now) {
+  if (isJournal(treatment)) return false;
   return sessionsRemaining(treatment) === 0 || isExpiredPack(treatment, now);
 }
 
@@ -142,6 +185,7 @@ export function isHistoryPack(treatment, now) {
  * Finished packs (used-up / expired) are never urgent.
  */
 export function isNeedsAttention(treatment, now) {
+  if (isJournal(treatment)) return false;
   if (!isOpenPack(treatment, now)) return false;
   const left = daysUntil(treatment && treatment.expiryDate, now);
   return left !== null && left >= 0 && left <= 30;
@@ -192,7 +236,8 @@ export function packHistoryDate(treatment, now) {
 }
 
 /**
- * Mixed History timeline: finished packs + their completed sessions, newest first.
+ * Mixed History timeline: finished packs + completed sessions, newest first.
+ * Journal visits are included as session rows. The journal itself stays on Home.
  * Each row keeps packageId and kind so promo/paid balances stay unmerged.
  */
 export function buildHistoryTimeline(treatments, now) {
@@ -208,6 +253,7 @@ export function buildHistoryTimeline(treatments, now) {
       date: packHistoryDate(pack, now),
       packageId: pack.id,
       kind,
+      trackMode: "package",
       usedUp: sessionsRemaining(pack) === 0,
       expired: isExpiredPack(pack, now),
       pack,
@@ -219,6 +265,25 @@ export function buildHistoryTimeline(treatments, now) {
         date: session.date,
         packageId: pack.id,
         kind,
+        trackMode: "package",
+        pack,
+        session,
+        sessionIndex: idx,
+      });
+    });
+  });
+  (treatments || []).filter((pack) => isJournal(pack) && pack.status !== "removed").forEach((pack) => {
+    const visits = sessionsWithPackageId(pack)
+      .slice()
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    visits.forEach((session, idx) => {
+      items.push({
+        type: "session",
+        id: `session-${pack.id}-${session.id}`,
+        date: session.date,
+        packageId: pack.id,
+        kind: packKind(pack),
+        trackMode: "journal",
         pack,
         session,
         sessionIndex: idx,

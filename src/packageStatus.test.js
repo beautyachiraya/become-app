@@ -15,6 +15,8 @@ import {
   listOpenPacks,
   mergeTreatmentsById,
   coerceSessions,
+  isJournal,
+  normalizeTreatment,
 } from "./packageStatus";
 
 const NOW = new Date("2026-09-16T12:00:00");
@@ -227,5 +229,103 @@ describe("history timeline", () => {
     ]);
     expect(items.filter((row) => row.packageId === 2).every((row) => row.kind === "promo")).toBe(true);
     expect(items.filter((row) => row.packageId === 4).every((row) => row.kind === "paid")).toBe(true);
+  });
+
+  it("lists journal visits without treating the journal as used up", () => {
+    const journal = {
+      id: "j",
+      trackMode: "journal",
+      status: "active",
+      name: "Botox",
+      clinic: "Glow Clinic",
+      totalSessions: null,
+      sessionsRemaining: null,
+      sessions: [{ id: 1, date: "2026-08-01", note: "Forehead" }],
+    };
+    const items = buildHistoryTimeline([journal, pack()], NOW);
+    expect(items.map((row) => row.type + ":" + row.packageId)).toEqual(["session:j"]);
+    expect(items[0].trackMode).toBe("journal");
+    expect(items[0].session.packageId).toBe("j");
+    expect(isHistoryPack(journal, NOW)).toBe(false);
+    expect(isOpenPack(journal, NOW)).toBe(true);
+  });
+});
+
+describe("journal track", () => {
+  function journal(overrides) {
+    return normalizeTreatment({
+      id: "j",
+      trackMode: "journal",
+      status: "active",
+      name: "Botox",
+      clinic: "Glow Clinic",
+      frequency: 30,
+      frequencyLabel: "Monthly",
+      totalSessions: null,
+      sessionsTotal: null,
+      sessionsRemaining: null,
+      expiryDate: null,
+      expiresAt: null,
+      sessions: [],
+      ...overrides,
+    });
+  }
+
+  it("keeps a treatment with no trackMode on the package path", () => {
+    const legacy = pack();
+    expect(legacy.trackMode).toBeUndefined();
+    expect(isJournal(legacy)).toBe(false);
+    expect(sessionsRemaining(legacy)).toBe(7);
+    expect(isOpenPack(legacy, NOW)).toBe(true);
+    expect(isHistoryPack(legacy, NOW)).toBe(false);
+  });
+
+  it("does not decrement remaining when a journal visit is logged, and stays on Home", () => {
+    const logged = applySessionLog(
+      [journal()],
+      "j",
+      { id: 5, date: "2026-09-16", note: "Soft result" }
+    );
+    const again = applySessionLog(logged, "j", { id: 6, date: "2026-10-16" });
+    const card = again[0];
+    expect(card.sessions).toHaveLength(2);
+    expect(card.sessions[0].packageId).toBe("j");
+    expect(card.sessions[1].packageId).toBe("j");
+    expect(card.totalSessions).toBeNull();
+    expect(card.sessionsTotal).toBeNull();
+    expect(card.sessionsRemaining).toBeNull();
+    expect(card.expiryDate).toBeNull();
+    expect(card.expiresAt).toBeNull();
+    expect(card.status).toBe("active");
+    expect(sessionsRemaining(card)).toBeNull();
+    expect(packSessionCounts(card)).toEqual({ used: 2, total: null, remaining: null });
+    expect(isOpenPack(card, NOW)).toBe(true);
+    expect(isHistoryPack(card, NOW)).toBe(false);
+    expect(isNeedsAttention(card, NOW)).toBe(false);
+    expect(listOpenPacks(again, NOW).map((item) => item.id)).toEqual(["j"]);
+  });
+
+  it("still removes a finished package from Home when its last session is logged", () => {
+    const pkg = pack({
+      id: "pkg",
+      trackMode: "package",
+      totalSessions: 1,
+      sessions: [],
+      expiryDate: "2026-12-31",
+    });
+    const legacy = pack({ id: "old", totalSessions: 1, sessions: [], expiryDate: "2026-12-31" });
+    const diary = journal({ id: "diary" });
+    const after = applySessionLog(
+      applySessionLog([pkg, legacy, diary], "pkg", { id: 1, date: "2026-09-16" }),
+      "old",
+      { id: 2, date: "2026-09-16" }
+    );
+    expect(sessionsRemaining(after.find((item) => item.id === "pkg"))).toBe(0);
+    expect(sessionsRemaining(after.find((item) => item.id === "old"))).toBe(0);
+    expect(after.find((item) => item.id === "pkg").sessions[0].packageId).toBe("pkg");
+    expect(listOpenPacks(after, NOW).map((item) => item.id)).toEqual(["diary"]);
+    expect(after.filter((item) => isHistoryPack(item, NOW)).map((item) => item.id).sort()).toEqual(["old", "pkg"]);
+    expect(isJournal(after.find((item) => item.id === "diary"))).toBe(true);
+    expect(sessionsRemaining(after.find((item) => item.id === "diary"))).toBeNull();
   });
 });
