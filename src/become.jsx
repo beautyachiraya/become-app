@@ -9,6 +9,7 @@ import {
 } from "./googleAuth";
 import { createDataClient, formatWriteError, formatProfilePhotoSaveError } from "./userData";
 import ProfileAvatarImage from "./profileAvatar";
+import { changeProfilePhoto, profileInitial, remotePhotoUrl } from "./profilePhoto";
 import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment, isJournal, lastSessionDate } from "./packageStatus";
 import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment, explicitPackKind } from "./treatmentForm";
 import TreatmentFormFields from "./TreatmentFormFields";
@@ -485,7 +486,7 @@ export default function Become(){
       if(cancelled)return;
       if(profile){
         setProfileForm(profile);
-        setProfilePhoto(profile.photoURL||null);
+        setProfilePhoto(remotePhotoUrl(profile.photoURL)||null);
       }else{
         setProfilePhoto(null);
       }
@@ -784,25 +785,30 @@ async function saveEditSession(){
   async function uploadProfilePhoto(file){
     if(!file)return;
     const user=auth.currentUser;
-    if(!user){
-      showPhotoSaveError(new Error("Please sign in and try again."));
+    const previous=profilePhoto;
+    setIsSaving(true);
+    // The avatar stays on the saved photo until Storage and the profile write both succeed.
+    const result=await changeProfilePhoto({
+      file,
+      user,
+      previousPhotoURL:previous,
+      storageRef:(uid)=>ref(storage,"users/"+uid+"/profile"),
+      upload:(pRef,nextFile)=>uploadBytes(pRef,nextFile),
+      downloadURL:(pRef)=>getDownloadURL(pRef),
+      writeProfile:(uid,data,options)=>dataClient.writeProfile(uid,data,options),
+    });
+    setProfilePhoto(result.photoURL||null);
+    if(result.cancelled){
+      setIsSaving(false);
       return;
     }
-    setIsSaving(true);
-    try{
-      const pRef=ref(storage,"users/"+user.uid+"/profile");
-      await uploadBytes(pRef,file);
-      const url=await getDownloadURL(pRef);
-      if(!url)throw new Error("No download link came back.");
-      await dataClient.writeProfile(user.uid,{photoURL:url},{merge:true});
-      setProfilePhoto(url);
-      setProfileForm(prev=>({...prev,photoURL:url}));
+    if(result.error){
+      showPhotoSaveError(result.error);
+    }else{
+      setProfileForm(prev=>({...prev,photoURL:result.photoURL}));
       setSyncError("");
-    }catch(e){
-      showPhotoSaveError(e);
-    }finally{
-      setIsSaving(false);
     }
+    setIsSaving(false);
   }
   const S=`
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
@@ -1119,12 +1125,11 @@ async function saveEditSession(){
                 <div style={{display:"flex",alignItems:"center",gap:16}}>
                   {/* Tappable avatar */}
                   <div style={{position:"relative",flexShrink:0}} onClick={()=>profilePhotoRef.current&&profilePhotoRef.current.click()}>
-                    <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(180,145,95,0.32)",overflow:"hidden",cursor:"pointer"}}>
+                    <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(180,145,95,0.32)",overflow:"hidden",cursor:"pointer",position:"relative"}}>
                       <ProfileAvatarImage
-                        key={profilePhoto||""}
                         profilePhotoURL={profilePhoto}
                         authPhotoURL={auth.currentUser&&auth.currentUser.photoURL}
-                        initial="S"
+                        initial={profileInitial(profileForm.name,profileForm.email)}
                         initialStyle={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:400,color:"#FAF7F2"}}
                       />
                     </div>
@@ -2071,12 +2076,11 @@ async function saveEditSession(){
                   {/* Avatar in modal */}
                   <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,marginBottom:4}}>
                     <div style={{position:"relative"}} onClick={()=>profilePhotoRef.current&&profilePhotoRef.current.click()}>
-                      <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",cursor:"pointer",boxShadow:"0 4px 16px rgba(180,145,95,0.3)"}}>
+                      <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",cursor:"pointer",boxShadow:"0 4px 16px rgba(180,145,95,0.3)",position:"relative"}}>
                         <ProfileAvatarImage
-                          key={profilePhoto||""}
                           profilePhotoURL={profilePhoto}
                           authPhotoURL={auth.currentUser&&auth.currentUser.photoURL}
-                          initial={profileForm.name[0]||"S"}
+                          initial={profileInitial(profileForm.name,profileForm.email)}
                           initialStyle={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:400,color:"#FAF7F2"}}
                         />
                       </div>

@@ -3,7 +3,9 @@ import {
   formatWriteError,
   resolveProfilePhotoUrl,
   formatProfilePhotoSaveError,
+  isLocalPhotoPreview,
   PROFILE_PHOTO_SAVE_ERROR,
+  PROFILE_PHOTO_QUOTA_ERROR,
   PROFILE_PHOTO_STORAGE_UNAVAILABLE_ERROR,
 } from "./userData";
 
@@ -73,6 +75,19 @@ describe("resolveProfilePhotoUrl", () => {
     expect(resolveProfilePhotoUrl({})).toBe("");
   });
 
+  it("skips a local file preview so a failed upload cannot look saved", () => {
+    expect(isLocalPhotoPreview("blob:http://localhost/selected")).toBe(true);
+    expect(isLocalPhotoPreview("data:image/png;base64,aaaa")).toBe(true);
+    expect(resolveProfilePhotoUrl({
+      profilePhotoURL: "data:image/png;base64,aaaa",
+      authPhotoURL: "",
+    })).toBe("");
+    expect(resolveProfilePhotoUrl({
+      profilePhotoURL: "blob:http://localhost/selected",
+      authPhotoURL: google,
+    })).toBe(google);
+  });
+
   it("skips a stored URL that failed to load and uses the Google photo", () => {
     expect(resolveProfilePhotoUrl({
       profilePhotoURL: stored,
@@ -113,6 +128,21 @@ describe("formatProfilePhotoSaveError", () => {
     expect(formatProfilePhotoSaveError(err)).toBe(PROFILE_PHOTO_SAVE_ERROR);
     expect(PROFILE_PHOTO_SAVE_ERROR).not.toMatch(/spark/i);
     expect(spy).toHaveBeenCalledWith("[Become] Couldn't save your photo", err);
+    spy.mockRestore();
+  });
+
+  it("maps storage/quota-exceeded to plain language and hides the Firebase message", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const err = {
+      code: "storage/quota-exceeded",
+      message: "Firebase Storage: Quota for bucket 'become-app-dde78.firebasestorage.app' exceeded (storage/quota-exceeded)",
+    };
+    const message = formatProfilePhotoSaveError(err);
+    expect(message).toBe(PROFILE_PHOTO_QUOTA_ERROR);
+    expect(message).toMatch(/free storage limit/i);
+    expect(message).toMatch(/try again later/i);
+    expect(message).toMatch(/free up some space/i);
+    expect(message).not.toMatch(/Firebase Storage|quota-exceeded|firebasestorage/i);
     spy.mockRestore();
   });
 

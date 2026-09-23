@@ -8,10 +8,22 @@ function cleanPhotoUrl(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** A FileReader data URL or blob URL is only a local preview, never a saved photo. */
+export function isLocalPhotoPreview(value) {
+  const url = cleanPhotoUrl(value).toLowerCase();
+  return url.startsWith("blob:") || url.startsWith("data:");
+}
+
+function usablePhotoUrl(value, failed) {
+  const url = cleanPhotoUrl(value);
+  if (!url || failed.has(url) || isLocalPhotoPreview(url)) return "";
+  return url;
+}
+
 /**
  * Avatar URL to try next.
- * Stored profile photo first, then the Google sign-in photo, then "" (initials).
- * URLs that already failed to load (img onError) are skipped.
+ * Stored profile photo first, then the sign-in photo, then "" (initials).
+ * Local previews and URLs that already failed to load are skipped.
  */
 export function resolveProfilePhotoUrl({ profilePhotoURL, authPhotoURL, failedUrls } = {}) {
   const failed = new Set(
@@ -19,14 +31,13 @@ export function resolveProfilePhotoUrl({ profilePhotoURL, authPhotoURL, failedUr
       .map(cleanPhotoUrl)
       .filter(Boolean)
   );
-  const stored = cleanPhotoUrl(profilePhotoURL);
-  const authUrl = cleanPhotoUrl(authPhotoURL);
-  if (stored && !failed.has(stored)) return stored;
-  if (authUrl && !failed.has(authUrl)) return authUrl;
-  return "";
+  return usablePhotoUrl(profilePhotoURL, failed) || usablePhotoUrl(authPhotoURL, failed) || "";
 }
 
 export const PROFILE_PHOTO_SAVE_ERROR = "Couldn't save your photo. Please try again.";
+
+export const PROFILE_PHOTO_QUOTA_ERROR =
+  "Couldn't save your photo. The free storage limit has been reached, so this picture wasn't saved. Try again later, or free up some space.";
 
 export const PROFILE_PHOTO_STORAGE_UNAVAILABLE_ERROR =
   "Couldn't save your photo. It wasn't saved because photo storage isn't available. On the Spark plan, uploading again won't store the picture — please try again once storage is available.";
@@ -39,11 +50,18 @@ function storageErrorText(error) {
   return parts.filter((part) => part != null && part !== "").join(" ");
 }
 
+function isStorageQuotaExceeded(error) {
+  const text = storageErrorText(error).toLowerCase();
+  if (!text) return false;
+  if (text.includes("storage/quota-exceeded") || text.includes("quota exceeded")) return true;
+  return text.includes("quota") && text.includes("bucket");
+}
+
 function isProfileStorageUnavailable(error) {
   const text = storageErrorText(error).toLowerCase();
   if (!text) return false;
   if (text.includes("billing") || text.includes("payment required") || text.includes("spark")) return true;
-  if (/storage\/(unknown|unauthorized|quota-exceeded|unauthenticated|bucket-not-found|project-not-found|invalid-default-bucket)/.test(text)) {
+  if (/storage\/(unknown|unauthorized|unauthenticated|bucket-not-found|project-not-found|invalid-default-bucket)/.test(text)) {
     return true;
   }
   return /\b402\b/.test(text) && (text.includes("storage") || text.includes("bucket"));
@@ -51,6 +69,7 @@ function isProfileStorageUnavailable(error) {
 
 export function formatProfilePhotoSaveError(error) {
   console.error("[Become] Couldn't save your photo", error);
+  if (isStorageQuotaExceeded(error)) return PROFILE_PHOTO_QUOTA_ERROR;
   if (isProfileStorageUnavailable(error)) return PROFILE_PHOTO_STORAGE_UNAVAILABLE_ERROR;
   return PROFILE_PHOTO_SAVE_ERROR;
 }

@@ -63,6 +63,37 @@ describe("ProfileAvatarImage", () => {
     view.unmount();
   });
 
+  it("shows initials for a broken profile URL when the image already failed before onError", () => {
+    const proto = window.HTMLImageElement.prototype;
+    const complete = Object.getOwnPropertyDescriptor(proto, "complete");
+    const naturalWidth = Object.getOwnPropertyDescriptor(proto, "naturalWidth");
+    Object.defineProperty(proto, "complete", { configurable: true, get() { return true; } });
+    Object.defineProperty(proto, "naturalWidth", { configurable: true, get() { return 0; } });
+    try {
+      const view = renderAvatar({ profilePhotoURL: stored, authPhotoURL: "", initial: "A" });
+      expect(view.container.querySelector("img")).toBeNull();
+      expect(view.container.textContent).toBe("A");
+      expect(view.container.textContent).not.toBe("Profile");
+      view.unmount();
+    } finally {
+      if (complete) Object.defineProperty(proto, "complete", complete);
+      else delete proto.complete;
+      if (naturalWidth) Object.defineProperty(proto, "naturalWidth", naturalWidth);
+      else delete proto.naturalWidth;
+    }
+  });
+
+  it("does not show a local file preview when there is no Google photo", () => {
+    const view = renderAvatar({
+      profilePhotoURL: "data:image/png;base64,aaaa",
+      authPhotoURL: "",
+      initial: "A",
+    });
+    expect(view.container.querySelector("img")).toBeNull();
+    expect(view.container.textContent).toBe("A");
+    view.unmount();
+  });
+
   it("shows initials after both the stored photo and the Google photo error", () => {
     const view = renderAvatar({ profilePhotoURL: stored, authPhotoURL: google, initial: "A" });
     act(() => {
