@@ -3,9 +3,10 @@ import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDo
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import { createDataClient, formatWriteError } from "./userData";
-import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment } from "./packageStatus";
+import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment, isJournal, lastSessionDate } from "./packageStatus";
 import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment, explicitPackKind } from "./treatmentForm";
 import TreatmentFormFields from "./TreatmentFormFields";
+import { JournalHomeCard, JournalDetailStats, JournalVisitList } from "./journalUi";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
 
@@ -78,9 +79,9 @@ const T = {
     booking_tab: "Booking",
     profile_tab: "Profile",
     history_title: "History",
-    history_lede: "Used-up and expired packages, and the sessions you completed — newest first.",
+    history_lede: "Used-up and expired packages, journal visits, and the sessions you completed — newest first.",
     history_empty_title: "Nothing in History yet.",
-    history_empty_sub: "When a package is used up or expires, it will land here with the sessions you already had.",
+    history_empty_sub: "When a package is used up or expires, it lands here. Journal visits show up here too — the journal itself stays on Home.",
     booking_title: "Booking",
     booking_lede: "Clinic appointments, in one calm place.",
     booking_coming_soon: "Booking — coming soon",
@@ -93,6 +94,23 @@ const T = {
     buy_more: "Buy more",
     completed_session: "Completed session",
     no_visits: "No visits logged",
+    track_package: "Package",
+    track_journal: "Journal",
+    journal_helper: "No session count or expiry. Log visits whenever you go — like a diary.",
+    journal_chip: "Journal",
+    no_visits_yet: "No visits yet",
+    tap_to_log_visit: "Tap to log a visit",
+    usually_prefix: "Usually",
+    visits_logged: "Visits logged",
+    last_visit: "Last visit",
+    next_suggested: "Next suggested",
+    log_visit: "Log visit",
+    save_visit: "Save visit",
+    journal_visit: "Visit",
+    how_often_optional: "How often (optional)",
+    whenever_i_go: "Whenever I go",
+    journal_add_sub: "A diary of visits — no session count, no expiry.",
+    edit_journal_sub: "Update your journal",
   },
   th: {
     until_treatment: "อีกนิดก็ถึงเวลาแล้ว",
@@ -111,9 +129,9 @@ const T = {
     booking_tab: "จองคิว",
     profile_tab: "โปรไฟล์",
     history_title: "ประวัติ",
-    history_lede: "แพ็กเกจที่ใช้ครบหรือหมดอายุ และเซสชันที่ทำไปแล้ว — ใหม่สุดอยู่บน",
+    history_lede: "แพ็กเกจที่ใช้ครบหรือหมดอายุ บันทึกการไป และเซสชันที่ทำไปแล้ว — ใหม่สุดอยู่บน",
     history_empty_title: "ยังไม่มีประวัติ",
-    history_empty_sub: "เมื่อแพ็กเกจใช้ครบหรือหมดอายุ จะแสดงที่นี่พร้อมเซสชันที่บันทึกไว้",
+    history_empty_sub: "เมื่อแพ็กเกจใช้ครบหรือหมดอายุ จะแสดงที่นี่ บันทึกการไปก็อยู่ที่นี่เช่นกัน — ตัวบันทึกยังอยู่ที่หน้าหลัก",
     booking_title: "จองคิว",
     booking_lede: "นัดคลินิกทั้งหมด ในที่เดียว",
     booking_coming_soon: "จองคิว — เร็วๆ นี้",
@@ -126,6 +144,23 @@ const T = {
     buy_more: "ซื้อเพิ่ม",
     completed_session: "เซสชันที่ทำแล้ว",
     no_visits: "ยังไม่มีเซสชันที่บันทึก",
+    track_package: "แพ็กเกจ",
+    track_journal: "บันทึก",
+    journal_helper: "ไม่มีจำนวนเซสชันหรือวันหมดอายุ บันทึกทุกครั้งที่ไปได้เลย — เหมือนไดอารี่",
+    journal_chip: "บันทึก",
+    no_visits_yet: "ยังไม่เคยไป",
+    tap_to_log_visit: "แตะเพื่อบันทึกการไป",
+    usually_prefix: "ปกติ",
+    visits_logged: "จำนวนครั้ง",
+    last_visit: "ครั้งล่าสุด",
+    next_suggested: "ครั้งถัดไปที่แนะนำ",
+    log_visit: "บันทึกการไป",
+    save_visit: "บันทึก",
+    journal_visit: "การไป",
+    how_often_optional: "ไปบ่อยแค่ไหน (ไม่บังคับ)",
+    whenever_i_go: "เมื่อไรก็ได้",
+    journal_add_sub: "ไดอารี่การไปรับบริการ — ไม่มีจำนวนเซสชัน ไม่มีวันหมดอายุ",
+    edit_journal_sub: "แก้ไขบันทึกของคุณ",
   },
 };
 const CURRENCIES = ["THB — Thai Baht ฿","USD — US Dollar $","AED — UAE Dirham د.إ"];
@@ -144,7 +179,12 @@ const SAMPLE_DATA = [
 function fmtDate(d){if(!d)return"—";return new Date(d).toLocaleDateString("en-US",{day:"numeric",month:"short",year:"numeric"});}
 function fmtShort(d){if(!d)return"—";return new Date(d).toLocaleDateString("en-US",{day:"numeric",month:"short"});}
 function addDays(d,n){if(!d)return null;const dt=new Date(d);dt.setDate(dt.getDate()+n);return dt.toISOString().split("T")[0];}
-function getNext(t){const sessions=coerceSessions(t&&t.sessions);if(!sessions.length)return null;const last=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date))[0];return addDays(last.date,t.frequency);}
+function getNext(t){if(!t||!t.frequency)return null;const sessions=coerceSessions(t.sessions);if(!sessions.length)return null;const last=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date))[0];return addDays(last.date,t.frequency);}
+function usuallyLine(treatment, prefix){
+  if(!treatment||!treatment.frequency||!treatment.frequencyLabel)return "";
+  if(treatment.frequencyLabel==="Custom")return `${prefix} every ${treatment.frequency} days`;
+  return `${prefix} ${String(treatment.frequencyLabel).toLowerCase()}`;
+}
 function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";}
 
 // Mock OAuth overlay — no longer opened by Sign in / Sign up.
@@ -574,7 +614,22 @@ async function logSession(){
     });
     setShowAdd(true);
   }
-  function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||""});setShowEdit(true);}
+  function openEdit(treatment){
+    const journal=isJournal(treatment);
+    setEditForm({
+      trackMode:journal?"journal":(treatment.trackMode||"package"),
+      name:treatment.name,
+      clinic:treatment.clinic,
+      brandUnit:treatment.brandUnit||"",
+      totalSessions:journal||treatment.totalSessions==null?"":String(treatment.totalSessions),
+      frequency:treatment.frequency,
+      frequencyLabel:journal?(treatment.frequencyLabel||""):treatment.frequencyLabel,
+      customDays:"",
+      expiryDate:journal?"":(treatment.expiryDate||""),
+      notes:treatment.notes||"",
+    });
+    setShowEdit(true);
+  }
 async function saveEdit(){
     if(!editForm||!sel)return;
     const updatedT=buildEditedTreatment(sel,editForm);
@@ -704,6 +759,7 @@ async function saveEditSession(){
     .pill-paid{background:#F5EFE6;color:#7A6A58;}
     .pill-danger{background:#FAEAEA;color:#C05858;}
     .pill-late{background:#F5E6F0;color:#A0407A;border:1px solid rgba(160,64,122,0.2);}
+    .pill-journal{background:rgba(180,145,95,0.12);color:#8C6E40;border:1px solid rgba(180,145,95,0.22);}
     .mbg{position:fixed;inset:0;background:rgba(28,22,18,0.45);backdrop-filter:blur(8px);z-index:200;display:flex;align-items:flex-end;justify-content:center;}
     .msheet{background:#FAF7F2;border-radius:28px 28px 0 0;padding:12px 24px 52px;width:100%;max-width:430px;max-height:90vh;overflow-y:auto;animation:slideUp 0.32s cubic-bezier(0.16,1,0.3,1);}
     .mhandle{width:36px;height:4px;border-radius:2px;background:#EDE5D8;margin:0 auto 24px;}
@@ -1186,11 +1242,12 @@ async function saveEditSession(){
 
 
                 {/* Until My Treatment */}
-                {openPacks.some(pack=>getNext(pack))&&(
+                {openPacks.some(pack=>!isJournal(pack)&&getNext(pack))&&(
                   <div className="pop p4" style={{marginBottom:20}}>
                     <p style={{fontSize:10,fontWeight:600,color:"#9A8A78",letterSpacing:2,textTransform:"uppercase",marginBottom:14,paddingLeft:4}}>{t("until_treatment")}</p>
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
                       {openPacks
+                        .filter(pack=>!isJournal(pack))
                         .map(pack=>({...pack,nextDate:getNext(pack),nextDays:daysUntil(getNext(pack))}))
                         .filter(pack=>pack.nextDate)
                         .sort((a,b)=>(a.nextDays??999)-(b.nextDays??999))
@@ -1279,6 +1336,27 @@ async function saveEditSession(){
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
                   {openPacks.map((pack,i)=>{
                     const p=PALETTE[(pack.palette||0)%PALETTE.length];
+                    if(isJournal(pack)){
+                      const last=lastSessionDate(pack);
+                      return(
+                        <JournalHomeCard
+                          key={pack.id}
+                          className={`tcard pop p${Math.min(i+3,5)}`}
+                          name={pack.name}
+                          clinic={pack.clinic}
+                          brandUnit={pack.brandUnit}
+                          notes={pack.notes}
+                          icon={TREATMENT_ICONS[pack.name]||"✧"}
+                          palette={p}
+                          chip={t("journal_chip")}
+                          lastVisitLabel={t("last_visit")}
+                          lastVisitText={last?fmtShort(last):t("no_visits_yet")}
+                          subline={t("tap_to_log_visit")}
+                          usually={usuallyLine(pack, t("usually_prefix"))}
+                          onClick={()=>goToDetail(pack.id)}
+                        />
+                      );
+                    }
                     const {used,total,remaining:rem}=packSessionCounts(pack);
                     const expDays=daysUntil(pack.expiryDate);
                     const next=getNext(pack);
@@ -1416,10 +1494,13 @@ async function saveEditSession(){
                           <div style={{flex:1,minWidth:0}}>
                             <p style={{fontSize:12,color:"#9A8A78",marginBottom:4}}>{fmtDate(item.date)}</p>
                             <p style={{fontSize:14,fontWeight:600}}>{pack.name}</p>
-                            <p style={{fontSize:12,color:"#9A8A78",marginTop:2}}>{t("completed_session")} · {pack.clinic}</p>
+                            <p style={{fontSize:12,color:"#9A8A78",marginTop:2}}>{isJournal(pack)?t("journal_visit"):t("completed_session")} · {pack.clinic}</p>
                             {item.session&&item.session.note&&<p style={{fontSize:12,color:"#7A6A58",marginTop:6}}>{item.session.note}</p>}
                           </div>
-                          {storedKind&&<span className={`pill ${storedKind==="promo"?"pill-promo":"pill-paid"}`}>{t(storedKind)}</span>}
+                          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+                            {isJournal(pack)&&<span className="pill pill-journal">{t("journal_chip")}</span>}
+                            {storedKind&&!isJournal(pack)&&<span className={`pill ${storedKind==="promo"?"pill-promo":"pill-paid"}`}>{t(storedKind)}</span>}
+                          </div>
                         </div>
                       </div>
                     );
@@ -1475,6 +1556,15 @@ async function saveEditSession(){
                     {sel.brandUnit&&<p style={{fontSize:12,color:"#B4915F",fontWeight:500,marginTop:2}}>{sel.brandUnit}</p>}{sel.notes&&<p style={{fontSize:12,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{sel.notes}</p>}
                   </div>
                 </div>
+                {isJournal(sel)?(
+                  <JournalDetailStats
+                    visitCount={selCounts.used}
+                    lastVisitText={lastSessionDate(sel)?fmtDate(lastSessionDate(sel)):t("no_visits_yet")}
+                    nextSuggestedText={sel.frequency?(getNext(sel)?fmtShort(getNext(sel)):sel.frequencyLabel):""}
+                    labels={{visits:t("visits_logged"),lastVisit:t("last_visit"),next:t("next_suggested")}}
+                    accent={pal.accent}
+                  />
+                ):(
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:24}}>
                   {[{label:"Done",val:selCounts.used},{label:"Left",val:selCounts.remaining},{label:"Total",val:selCounts.total}].map(s=>(
                     <div key={s.label} className="card" style={{padding:"14px 10px",textAlign:"center"}}>
@@ -1483,6 +1573,7 @@ async function saveEditSession(){
                     </div>
                   ))}
                 </div>
+                )}
               </div>
 
               <div style={{padding:"20px"}}>
@@ -1491,7 +1582,23 @@ async function saveEditSession(){
                   <button className={`t ${detailTab==="aftercare"?"on":""}`} onClick={()=>setDetailTab("aftercare")}>Aftercare Guide</button>
                 </div>
 
-                {detailTab==="sessions"&&(
+                {detailTab==="sessions"&&isJournal(sel)&&(
+                  <JournalVisitList
+                    visits={sortedSessions.map((ss)=>({id:ss.id,dateText:fmtDate(ss.date),note:ss.note||""}))}
+                    emptyLabel={t("no_visits_yet")}
+                    usually={usuallyLine(sel, t("usually_prefix"))}
+                    nextSuggestedText={getNext(sel)?fmtDate(getNext(sel)):""}
+                    nextLabel={t("next_suggested")}
+                    logLabel={t("log_visit")}
+                    accent={pal.accent}
+                    soft={pal.bg}
+                    isSaving={isSaving}
+                    onLog={()=>{setLogForm({date:new Date().toISOString().split("T")[0],note:"",photo:null});setShowLog(true);}}
+                    onOpenVisit={(index)=>{setSessionIdx(index);setView("session");}}
+                  />
+                )}
+
+                {detailTab==="sessions"&&!isJournal(sel)&&(
                   <div>
                     {getNext(sel)&&selCounts.remaining>0&&(()=>{
                       const nextDays=daysUntil(getNext(sel));
@@ -1647,7 +1754,7 @@ async function saveEditSession(){
                   </div>
                   <div>
                     <p style={{fontSize:12,color:"#9A8A78"}}>{sel.name} · {sel.clinic}</p>
-                    <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:400}}>Session {sessionIdx+1}</h2>
+                    <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:400}}>{isJournal(sel)?`${t("journal_visit")} ${sessionIdx+1}`:`Session ${sessionIdx+1}`}</h2>
                     <p style={{fontSize:13,color:pal.text,fontWeight:600,marginTop:2}}>{fmtDate(selSession.date)}</p>
                   </div>
                 </div>
@@ -1708,13 +1815,15 @@ async function saveEditSession(){
               <div className="msheet">
                 <div className="mhandle"/>
                 <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,marginBottom:4}}>New Treatment</h2>
-                <p style={{fontSize:13,color:"#9A8A78",marginBottom:24}}>Add a package from any clinic</p>
+                <p style={{fontSize:13,color:"#9A8A78",marginBottom:24}}>{form.trackMode==="journal"?t("journal_add_sub"):"Add a package from any clinic"}</p>
                 <TreatmentFormFields
                   form={form}
                   setForm={setForm}
                   treatmentTypes={TREATMENT_TYPES}
                   frequencies={FREQUENCIES}
                   allowCustomName
+                  allowModeSwitch
+                  labels={{package:t("track_package"),journal:t("track_journal"),helper:t("journal_helper"),howOftenOptional:t("how_often_optional"),whenever:t("whenever_i_go")}}
                   onSubmit={addTreatment}
                   isSaving={isSaving}
                   submitLabel="Add to My Diary"
@@ -1728,7 +1837,7 @@ async function saveEditSession(){
             <div className="mbg" onClick={e=>{if(e.target===e.currentTarget)setShowLog(false);}}>
               <div className="msheet">
                 <div className="mhandle"/>
-                <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,marginBottom:4}}>Log Session {(logTargetIdx!==null?logTargetIdx:selCounts.used)+1}</h2>
+                <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,marginBottom:4}}>{isJournal(sel)?t("log_visit"):`Log Session ${(logTargetIdx!==null?logTargetIdx:selCounts.used)+1}`}</h2>
                 <p style={{fontSize:13,color:"#9A8A78",marginBottom:24}}>{sel.name} · {sel.clinic}</p>
                 <div style={{display:"flex",flexDirection:"column",gap:16}}>
                   <div><span className="lbl">Date of appointment</span><input className="inp" type="date" value={logForm.date} onChange={e=>setLogForm({...logForm,date:e.target.value})}/></div>
@@ -1751,7 +1860,7 @@ async function saveEditSession(){
                       onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setLogForm(lf=>({...lf,photo:ev.target.result}));r.readAsDataURL(f);}}/>
                   </div>
                   <div><span className="lbl">How did it go?</span><textarea className="inp" rows={3} placeholder="Results, any reactions, how you feel..." value={logForm.note} onChange={e=>setLogForm({...logForm,note:e.target.value})}/></div>
-                  <button className="btn" style={{background:pal.accent,color:"#FFF",boxShadow:`0 8px 24px ${pal.accent}28`,marginTop:4,fontWeight:600}} onClick={logSession} disabled={isSaving}>{isSaving?"Saving…":"Save Session"}</button>
+                  <button className="btn" style={{background:pal.accent,color:"#FFF",boxShadow:`0 8px 24px ${pal.accent}28`,marginTop:4,fontWeight:600}} onClick={logSession} disabled={isSaving}>{isSaving?"Saving…":(isJournal(sel)?t("save_visit"):"Save Session")}</button>
                 </div>
               </div>
             </div>
@@ -1803,7 +1912,7 @@ async function saveEditSession(){
               <div className="msheet">
                 <div className="mhandle"/>
                 <div style={{marginBottom:24}}>
-                  <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:400}}>Edit Session {sessionIdx+1}</h2>
+                  <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:400}}>{isJournal(sel)?`Edit ${t("journal_visit")} ${sessionIdx+1}`:`Edit Session ${sessionIdx+1}`}</h2>
                   <p style={{fontSize:13,color:"#9A8A78",marginTop:2}}>{sel&&sel.name} · {sel&&sel.clinic}</p>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -1834,7 +1943,7 @@ async function saveEditSession(){
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:24}}>
                   <div>
                     <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:400}}>Edit Treatment</h2>
-                    <p style={{fontSize:13,color:"#9A8A78",marginTop:2}}>Update your package details</p>
+                    <p style={{fontSize:13,color:"#9A8A78",marginTop:2}}>{isJournal(sel)?t("edit_journal_sub"):"Update your package details"}</p>
                   </div>
                 </div>
                 <TreatmentFormFields
@@ -1842,6 +1951,7 @@ async function saveEditSession(){
                   setForm={setEditForm}
                   treatmentTypes={TREATMENT_TYPES}
                   frequencies={FREQUENCIES}
+                  labels={{package:t("track_package"),journal:t("track_journal"),helper:t("journal_helper"),howOftenOptional:t("how_often_optional"),whenever:t("whenever_i_go")}}
                   onSubmit={saveEdit}
                   isSaving={isSaving}
                   submitLabel="Save Changes"

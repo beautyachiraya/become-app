@@ -1,6 +1,7 @@
 /** Blank Add Treatment form. Package source (promo or paid) is not collected. */
 export function emptyTreatmentForm() {
   return {
+    trackMode: "package",
     name: "Laser Hair Removal",
     customName: "",
     clinic: "",
@@ -12,6 +13,43 @@ export function emptyTreatmentForm() {
     expiryDate: "",
     notes: "",
   };
+}
+
+/** Toggle between a counted package and a no-expiry journal. */
+export function switchTrackMode(form, trackMode) {
+  const current = form || emptyTreatmentForm();
+  if (trackMode === "journal") {
+    return {
+      ...current,
+      trackMode: "journal",
+      totalSessions: "",
+      expiryDate: "",
+      frequency: null,
+      frequencyLabel: "",
+      customDays: "",
+    };
+  }
+  return {
+    ...current,
+    trackMode: "package",
+    frequency: 30,
+    frequencyLabel: "Monthly",
+    customDays: "",
+  };
+}
+
+function journalInterval(form) {
+  if (!form || !form.frequencyLabel) return null;
+  if (form.frequencyLabel === "Custom") {
+    const typed = parseInt(form.customDays, 10);
+    if (Number.isFinite(typed) && typed > 0) {
+      return { frequency: typed, frequencyLabel: "Custom" };
+    }
+    return null;
+  }
+  const days = Number(form.frequency);
+  if (!Number.isFinite(days) || days <= 0) return null;
+  return { frequency: days, frequencyLabel: form.frequencyLabel };
 }
 
 export function resolveTreatmentName(form) {
@@ -29,8 +67,30 @@ export function resolveFrequencyDays(form) {
  * does not force promo or paid. Existing Firestore fields are left as stored.
  */
 export function buildNewTreatment(form, { id, palette } = {}) {
+  if (form && form.trackMode === "journal") {
+    const interval = journalInterval(form);
+    return {
+      id,
+      trackMode: "journal",
+      status: "active",
+      name: resolveTreatmentName(form),
+      clinic: form.clinic,
+      brandUnit: form.brandUnit || "",
+      totalSessions: null,
+      sessionsTotal: null,
+      sessionsRemaining: null,
+      expiryDate: null,
+      expiresAt: null,
+      frequency: interval ? interval.frequency : null,
+      frequencyLabel: interval ? interval.frequencyLabel : null,
+      palette,
+      notes: form.notes || "",
+      sessions: [],
+    };
+  }
   return {
     id,
+    trackMode: "package",
     name: resolveTreatmentName(form),
     clinic: form.clinic,
     brandUnit: form.brandUnit,
@@ -56,6 +116,33 @@ export function explicitPackKind(treatment) {
 
 /** Edit keeps any stored kind or source. The form no longer asks for either. */
 export function buildEditedTreatment(existing, form) {
+  if (existing && existing.trackMode === "journal") {
+    const interval = journalInterval(form);
+    const keptCustom = form
+      && form.frequencyLabel === "Custom"
+      && !interval
+      && existing.frequencyLabel === "Custom"
+      && existing.frequency
+      ? { frequency: existing.frequency, frequencyLabel: "Custom" }
+      : null;
+    const nextInterval = interval || keptCustom;
+    return {
+      ...existing,
+      trackMode: "journal",
+      status: existing.status === "removed" ? "removed" : "active",
+      name: form.name,
+      clinic: form.clinic,
+      brandUnit: form.brandUnit,
+      totalSessions: null,
+      sessionsTotal: null,
+      sessionsRemaining: null,
+      expiryDate: null,
+      expiresAt: null,
+      frequency: nextInterval ? nextInterval.frequency : null,
+      frequencyLabel: nextInterval ? nextInterval.frequencyLabel : null,
+      notes: form.notes,
+    };
+  }
   return {
     ...existing,
     name: form.name,
