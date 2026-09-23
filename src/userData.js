@@ -4,6 +4,57 @@ export function formatWriteError(action, error) {
   return `${action}: ${detail}`;
 }
 
+function cleanPhotoUrl(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Avatar URL to try next.
+ * Stored profile photo first, then the Google sign-in photo, then "" (initials).
+ * URLs that already failed to load (img onError) are skipped.
+ */
+export function resolveProfilePhotoUrl({ profilePhotoURL, authPhotoURL, failedUrls } = {}) {
+  const failed = new Set(
+    (Array.isArray(failedUrls) ? failedUrls : [])
+      .map(cleanPhotoUrl)
+      .filter(Boolean)
+  );
+  const stored = cleanPhotoUrl(profilePhotoURL);
+  const authUrl = cleanPhotoUrl(authPhotoURL);
+  if (stored && !failed.has(stored)) return stored;
+  if (authUrl && !failed.has(authUrl)) return authUrl;
+  return "";
+}
+
+export const PROFILE_PHOTO_SAVE_ERROR = "Couldn't save your photo. Please try again.";
+
+export const PROFILE_PHOTO_STORAGE_UNAVAILABLE_ERROR =
+  "Couldn't save your photo. It wasn't saved because photo storage isn't available. On the Spark plan, uploading again won't store the picture — please try again once storage is available.";
+
+function storageErrorText(error) {
+  if (!error || typeof error !== "object") return String(error || "");
+  const parts = [error.code, error.message, error.status, error.status_, error.serverResponse];
+  const serverResponse = error.customData && error.customData.serverResponse;
+  if (serverResponse) parts.push(typeof serverResponse === "string" ? serverResponse : JSON.stringify(serverResponse));
+  return parts.filter((part) => part != null && part !== "").join(" ");
+}
+
+function isProfileStorageUnavailable(error) {
+  const text = storageErrorText(error).toLowerCase();
+  if (!text) return false;
+  if (text.includes("billing") || text.includes("payment required") || text.includes("spark")) return true;
+  if (/storage\/(unknown|unauthorized|quota-exceeded|unauthenticated|bucket-not-found|project-not-found|invalid-default-bucket)/.test(text)) {
+    return true;
+  }
+  return /\b402\b/.test(text) && (text.includes("storage") || text.includes("bucket"));
+}
+
+export function formatProfilePhotoSaveError(error) {
+  console.error("[Become] Couldn't save your photo", error);
+  if (isProfileStorageUnavailable(error)) return PROFILE_PHOTO_STORAGE_UNAVAILABLE_ERROR;
+  return PROFILE_PHOTO_SAVE_ERROR;
+}
+
 export function createDataClient(api) {
   if (!api || !api.getDoc || !api.getDocs || !api.setDoc || !api.deleteDoc || !api.doc || !api.collection) {
     throw new Error("createDataClient requires Firestore functions");

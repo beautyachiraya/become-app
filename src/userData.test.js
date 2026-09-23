@@ -1,4 +1,11 @@
-import { createDataClient, formatWriteError } from "./userData";
+import {
+  createDataClient,
+  formatWriteError,
+  resolveProfilePhotoUrl,
+  formatProfilePhotoSaveError,
+  PROFILE_PHOTO_SAVE_ERROR,
+  PROFILE_PHOTO_STORAGE_UNAVAILABLE_ERROR,
+} from "./userData";
 
 function profileSnap(data) {
   return {
@@ -43,6 +50,115 @@ describe("formatWriteError", () => {
     expect(formatWriteError("Couldn't save your profile", {})).toBe(
       "Couldn't save your profile: Please try again."
     );
+    spy.mockRestore();
+  });
+});
+
+describe("resolveProfilePhotoUrl", () => {
+  const stored = "https://firebasestorage.googleapis.com/v0/b/become/o/profile";
+  const google = "https://lh3.googleusercontent.com/a/achiraya";
+
+  it("prefers a stored profile photo over the Google sign-in photo", () => {
+    expect(resolveProfilePhotoUrl({ profilePhotoURL: stored, authPhotoURL: google })).toBe(stored);
+  });
+
+  it("uses the Google photo when the stored photo is missing", () => {
+    expect(resolveProfilePhotoUrl({ profilePhotoURL: "", authPhotoURL: google })).toBe(google);
+    expect(resolveProfilePhotoUrl({ profilePhotoURL: "   ", authPhotoURL: google })).toBe(google);
+    expect(resolveProfilePhotoUrl({ profilePhotoURL: null, authPhotoURL: google })).toBe(google);
+  });
+
+  it("returns an empty string when neither photo is set so the initials placeholder shows", () => {
+    expect(resolveProfilePhotoUrl({ profilePhotoURL: null, authPhotoURL: "" })).toBe("");
+    expect(resolveProfilePhotoUrl({})).toBe("");
+  });
+
+  it("skips a stored URL that failed to load and uses the Google photo", () => {
+    expect(resolveProfilePhotoUrl({
+      profilePhotoURL: stored,
+      authPhotoURL: google,
+      failedUrls: [stored],
+    })).toBe(google);
+  });
+
+  it("returns empty when the stored URL failed and there is no Google photo", () => {
+    expect(resolveProfilePhotoUrl({
+      profilePhotoURL: stored,
+      authPhotoURL: null,
+      failedUrls: [stored],
+    })).toBe("");
+  });
+
+  it("returns empty when the stored URL and the Google photo are the same broken URL", () => {
+    expect(resolveProfilePhotoUrl({
+      profilePhotoURL: stored,
+      authPhotoURL: stored,
+      failedUrls: [stored],
+    })).toBe("");
+  });
+
+  it("returns empty after both the stored URL and the Google photo fail", () => {
+    expect(resolveProfilePhotoUrl({
+      profilePhotoURL: stored,
+      authPhotoURL: google,
+      failedUrls: [stored, google],
+    })).toBe("");
+  });
+});
+
+describe("formatProfilePhotoSaveError", () => {
+  it("asks the user to try again for an ordinary failure and does not pretend it saved", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const err = new Error("network down");
+    expect(formatProfilePhotoSaveError(err)).toBe(PROFILE_PHOTO_SAVE_ERROR);
+    expect(PROFILE_PHOTO_SAVE_ERROR).not.toMatch(/spark/i);
+    expect(spy).toHaveBeenCalledWith("[Become] Couldn't save your photo", err);
+    spy.mockRestore();
+  });
+
+  it("explains that a Spark storage rejection will not be fixed by uploading again", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const err = {
+      code: "storage/unknown",
+      message: "Firebase Storage: An unknown error occurred. (storage/unknown)",
+      customData: {
+        serverResponse: JSON.stringify({
+          error: { code: 402, message: "The billing account for the owning project is disabled" },
+        }),
+      },
+    };
+    const message = formatProfilePhotoSaveError(err);
+    expect(message).toBe(PROFILE_PHOTO_STORAGE_UNAVAILABLE_ERROR);
+    expect(message).toMatch(/wasn't saved/i);
+    expect(message).toMatch(/Spark/);
+    expect(message).toMatch(/uploading again won't/i);
+    spy.mockRestore();
+  });
+
+  it("treats storage/unauthorized as storage unavailable, not a silent success", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    expect(formatProfilePhotoSaveError({
+      code: "storage/unauthorized",
+      message: "User does not have permission to access 'users/uid/profile'. (storage/unauthorized)",
+    })).toBe(PROFILE_PHOTO_STORAGE_UNAVAILABLE_ERROR);
+    spy.mockRestore();
+  });
+
+  it("keeps a Firestore permission error as a try-again, not a Spark storage message", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    expect(formatProfilePhotoSaveError({
+      code: "permission-denied",
+      message: "Missing or insufficient permissions.",
+    })).toBe(PROFILE_PHOTO_SAVE_ERROR);
+    spy.mockRestore();
+  });
+
+  it("keeps a retryable storage network error as a try-again", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    expect(formatProfilePhotoSaveError({
+      code: "storage/retry-limit-exceeded",
+      message: "Max retry time for operation exceeded. (storage/retry-limit-exceeded)",
+    })).toBe(PROFILE_PHOTO_SAVE_ERROR);
     spy.mockRestore();
   });
 });
