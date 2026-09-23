@@ -1,7 +1,12 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
-import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
+import { auth, googleRedirectAuth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
+import { signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signOut, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
+import {
+  prefersGoogleRedirect, readGoogleRedirectEnv, browserSessionStorage, peekGoogleRedirectIntent,
+  takeGoogleRedirectIntent, startGoogleSignIn, loadGoogleRedirectResult, adoptRedirectUser,
+  googleRedirectOutcome, profileFromGoogleUser,
+} from "./googleAuth";
 import { createDataClient, formatWriteError } from "./userData";
 import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment, isJournal, lastSessionDate } from "./packageStatus";
 import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment, explicitPackKind } from "./treatmentForm";
@@ -188,7 +193,7 @@ function usuallyLine(treatment, prefix){
 function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";}
 
 // Mock OAuth overlay — no longer opened by Sign in / Sign up.
-// Google uses Firebase popup; Facebook is not wired, so that CTA is hidden.
+// Google uses a Firebase popup on desktop and a redirect on mobile. Facebook is not wired.
 function OAuthScreen({provider,onSuccess,onCancel}){
   const [stage,setStage]=useState("browser");
   const [progress,setProgress]=useState(0);
@@ -357,6 +362,7 @@ export default function Become(){
   const [resetSuccess,setResetSuccess]=useState("");
   const [resetMessage,setResetMessage]=useState("");
   const [justSignedUp,setJustSignedUp]=useState(false);
+  const [googleRedirectPending,setGoogleRedirectPending]=useState(()=>!!peekGoogleRedirectIntent(browserSessionStorage()));
   const oR0=useRef(),oR1=useRef(),oR2=useRef(),oR3=useRef(),oR4=useRef();
   const otpRefs=[oR0,oR1,oR2,oR3,oR4];
 
@@ -406,6 +412,68 @@ export default function Become(){
   const sortedSessions=sel?coerceSessions(sel.sessions).slice().sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
   const selCounts=sel?packSessionCounts(sel):{used:0,total:0,remaining:0};
+
+  useEffect(()=>{
+    let active=true;
+    function showGoogleRedirectError(intent, error){
+      const msg=mapAuthError(error,"google");
+      if(intent==="signup"){
+        setAuthScreen("signup");
+        if(msg)setSignupMessage(msg);
+      }else if(msg){
+        setLoginMessage(msg);
+      }
+    }
+    loadGoogleRedirectResult(googleRedirectAuth, getRedirectResult)
+      .then(async(result)=>{
+        if(!active)return;
+        const intent=takeGoogleRedirectIntent(browserSessionStorage());
+        let user=null;
+        try{
+          user=await adoptRedirectUser({
+            primaryAuth:auth,
+            redirectAuth:googleRedirectAuth,
+            result,
+            credentialFromResult:(credResult)=>GoogleAuthProvider.credentialFromResult(credResult),
+            signInWithCredential,
+            signOut,
+          });
+        }catch(error){
+          if(!active)return;
+          console.error("[Become] Google redirect sign-in failed", error);
+          showGoogleRedirectError(intent, error);
+          return;
+        }
+        if(!active)return;
+        const outcome=googleRedirectOutcome(user?{user}:null, intent);
+        if(outcome.status==="success"){
+          setProfileForm(outcome.profile);
+          setJustSignedUp(outcome.fromSignup);
+          setAuthScreen("app");
+        }else if(outcome.status==="incomplete"){
+          if(outcome.fromSignup){
+            setSignupMessage(outcome.message);
+            setAuthScreen("signup");
+          }else{
+            setLoginMessage(outcome.message);
+          }
+        }
+      })
+      .catch((error)=>{
+        if(!active)return;
+        const intent=takeGoogleRedirectIntent(browserSessionStorage());
+        if(!intent){
+          console.error("[Become] Google redirect check failed", error);
+          return;
+        }
+        console.error("[Become] Google redirect sign-in failed", error);
+        showGoogleRedirectError(intent, error);
+      })
+      .finally(()=>{
+        if(active)setGoogleRedirectPending(false);
+      });
+    return()=>{active=false;};
+  },[]);
 
   useEffect(()=>{
     if(authScreen!=="app")return;
@@ -467,22 +535,28 @@ export default function Become(){
     setLoginMessage("");
     setSignupMessage("");
     setAuthBusy("google");
-    try{
-      const r=await signInWithPopup(auth,googleProvider);
-      if(r.user){
-        setProfileForm({name:r.user.displayName||"",email:r.user.email||"",phone:""});
-        setJustSignedUp(!!fromSignup);
-        setAuthScreen("app");
-      }
-    }catch(e){
-      const msg=mapAuthError(e,"google");
+    const outcome=await startGoogleSignIn({
+      popupAuth:auth,
+      redirectAuth:googleRedirectAuth,
+      provider:googleProvider,
+      fromSignup,
+      useRedirect:prefersGoogleRedirect(readGoogleRedirectEnv()),
+      storage:browserSessionStorage(),
+      signInWithPopup,
+      signInWithRedirect,
+    });
+    if(outcome.status==="success"&&outcome.user){
+      setProfileForm(profileFromGoogleUser(outcome.user));
+      setJustSignedUp(!!fromSignup);
+      setAuthScreen("app");
+    }else if(outcome.status==="error"){
+      const msg=mapAuthError(outcome.error,"google");
       if(msg){
         if(fromSignup)setSignupMessage(msg);
         else setLoginMessage(msg);
       }
-    }finally{
-      setAuthBusy("");
     }
+    if(outcome.status!=="redirecting")setAuthBusy("");
   }
   async function handlePasswordReset(){
     const err=validateResetEmail(resetForm.email);
@@ -799,6 +873,14 @@ async function saveEditSession(){
   return (
     <div style={{minHeight:"100vh",background:"transparent",fontFamily:"'DM Sans',sans-serif",color:"#1C1612"}}>
       <style>{S}</style>
+      {googleRedirectPending&&(
+        <div role="status" style={{position:"fixed",inset:0,zIndex:450,background:"#FAF7F2",display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 24px"}}>
+          <div style={{textAlign:"center"}}>
+            <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:40,fontWeight:300,letterSpacing:4,marginBottom:8}}>become</h1>
+            <p style={{fontSize:14,color:"#9A8A78"}}>Connecting with Google…</p>
+          </div>
+        </div>
+      )}
       {syncError&&(
         <div role="alert" style={{position:"fixed",top:0,left:0,right:0,zIndex:500,display:"flex",justifyContent:"center",padding:"12px 16px",pointerEvents:"none"}}>
           <div style={{pointerEvents:"auto",maxWidth:430,width:"100%",background:"#FAEAEA",border:"1px solid rgba(192,88,88,0.28)",borderRadius:14,padding:"12px 14px",display:"flex",gap:10,alignItems:"flex-start",boxShadow:"0 8px 24px rgba(28,22,18,0.08)"}}>
@@ -812,7 +894,7 @@ async function saveEditSession(){
       {showPrivacy&&<PolicyModal title="Privacy Policy" sections={PRIVACY_SECTIONS} onClose={()=>setShowPrivacy(false)} onAccept={()=>{setPrivacyAccepted(true);setShowPrivacy(false);}} acceptLabel="I Have Read and Accept"/>}
       {showTerms&&<PolicyModal title="Terms of Service" sections={TERMS_SECTIONS} onClose={()=>setShowTerms(false)} onAccept={()=>{setTermsAccepted(true);setShowTerms(false);}} acceptLabel="I Agree to the Terms"/>}
 
-      {/* Mock OAuth overlay is unused by live CTAs (Google = Firebase popup). */}
+      {/* Mock OAuth overlay is unused by live CTAs (Google = Firebase popup or redirect). */}
       {oauthProvider&&(
         <OAuthScreen
           provider={oauthProvider}

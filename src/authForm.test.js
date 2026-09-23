@@ -59,6 +59,22 @@ describe("mapAuthError", () => {
 
   it("does not surface a cancelled Google popup as an error", () => {
     expect(mapAuthError({ code: "auth/popup-closed-by-user" })).toBe("");
+    expect(mapAuthError({ code: "auth/redirect-cancelled-by-user" })).toBe("");
+  });
+
+  it("explains Google redirect failures", () => {
+    expect(mapAuthError({ code: "auth/unauthorized-domain" }, "google")).toBe(
+      "Google sign-in isn't available from this address. Try email and password."
+    );
+    expect(mapAuthError({ code: "auth/web-storage-unsupported" }, "google")).toContain(
+      "private browsing"
+    );
+    expect(mapAuthError({ code: "auth/operation-not-supported-in-this-environment" }, "google")).toContain(
+      "isn't supported"
+    );
+    expect(mapAuthError({ code: "auth/missing-google-credential" }, "google")).toBe(
+      "Google sign-in couldn't be finished. Please try again."
+    );
   });
 
   it("falls back to a generic message", () => {
