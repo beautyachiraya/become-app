@@ -13,6 +13,7 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+export const firebaseApiKey = firebaseConfig.apiKey;
 export const auth = getAuth(app); export const db = getFirestore(app); export const storage = getStorage(app);
 
 // Google redirect uses the Firebase auth domain on every host, including the live
