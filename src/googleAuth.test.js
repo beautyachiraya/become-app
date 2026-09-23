@@ -5,6 +5,13 @@ import {
   GOOGLE_REDIRECT_INCOMPLETE,
   resolveAuthDomain,
   prefersGoogleRedirect,
+  shouldPrimeGooglePopup,
+  redirectFallbackAllowed,
+  beginGooglePopupGesture,
+  hadPendingGoogleRedirect,
+  firebasePendingRedirectKey,
+  readPageNavigationType,
+  isAbandonedGoogleRedirect,
   rememberGoogleRedirectIntent,
   peekGoogleRedirectIntent,
   takeGoogleRedirectIntent,
@@ -42,22 +49,24 @@ describe("resolveAuthDomain", () => {
   });
 });
 
+const IPHONE_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+const ANDROID_CHROME = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
+
 describe("prefersGoogleRedirect", () => {
-  it("uses redirect for phones and in-app browsers", () => {
+  it("uses a popup on iPhone Safari, Android Chrome, and a narrow desktop window", () => {
+    expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(false);
+    expect(prefersGoogleRedirect({ userAgent: ANDROID_CHROME })).toBe(false);
     expect(prefersGoogleRedirect({
-      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-    })).toBe(true);
-    expect(prefersGoogleRedirect({
-      userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
-    })).toBe(true);
-    expect(prefersGoogleRedirect({
-      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 320.0.0.0.0",
-    })).toBe(true);
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+      narrowViewport: true,
+    })).toBe(false);
     expect(prefersGoogleRedirect({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
       platform: "MacIntel",
       maxTouchPoints: 5,
-    })).toBe(true);
+    })).toBe(false);
   });
 
   it("keeps a popup on a wide desktop browser", () => {
@@ -74,27 +83,88 @@ describe("prefersGoogleRedirect", () => {
     })).toBe(false);
   });
 
-  it("uses redirect on a phone-width window even when the browser looks like desktop", () => {
-    const desktop = {
+  it("still redirects from in-app browsers and an installed home-screen app", () => {
+    expect(prefersGoogleRedirect({
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 320.0.0.0.0",
+    })).toBe(true);
+    expect(prefersGoogleRedirect({
+      userAgent: IPHONE_SAFARI,
+      standalone: true,
+    })).toBe(true);
+    expect(prefersGoogleRedirect({
+      userAgent: IPHONE_SAFARI,
+      standalone: false,
+    })).toBe(false);
+  });
+});
+
+describe("shouldPrimeGooglePopup", () => {
+  it("opens the window during the tap on phones that use a popup", () => {
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(true);
+    expect(shouldPrimeGooglePopup({ userAgent: ANDROID_CHROME })).toBe(true);
+    expect(shouldPrimeGooglePopup({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       platform: "MacIntel",
       maxTouchPoints: 0,
-    };
-    expect(prefersGoogleRedirect({ ...desktop, narrowViewport: true })).toBe(true);
-    expect(prefersGoogleRedirect({
-      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
-      narrowViewport: false,
-    })).toBe(true);
+    })).toBe(false);
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI, standalone: true })).toBe(false);
+  });
+});
 
-    const original = window.matchMedia;
-    try {
-      window.matchMedia = (query) => ({ matches: String(query).indexOf("max-width: 768px") !== -1, media: query });
-      expect(prefersGoogleRedirect(desktop)).toBe(true);
-      window.matchMedia = () => ({ matches: false, media: "" });
-      expect(prefersGoogleRedirect(desktop)).toBe(false);
-    } finally {
-      window.matchMedia = original;
-    }
+describe("redirectFallbackAllowed", () => {
+  it("does not start a redirect after a failed popup on iPhone or Android", () => {
+    expect(redirectFallbackAllowed({ userAgent: IPHONE_SAFARI })).toBe(false);
+    expect(redirectFallbackAllowed({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+      platform: "MacIntel",
+      maxTouchPoints: 5,
+    })).toBe(false);
+    expect(redirectFallbackAllowed({ userAgent: ANDROID_CHROME })).toBe(false);
+    expect(redirectFallbackAllowed({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    })).toBe(true);
+  });
+});
+
+describe("beginGooglePopupGesture", () => {
+  function popupWindow() {
+    return {
+      closed: false,
+      location: { href: "about:blank" },
+      focus: jest.fn(),
+      close: jest.fn(),
+    };
+  }
+
+  it("navigates the window opened during the tap when Firebase opens one later", () => {
+    const popup = popupWindow();
+    const nativeOpen = jest.fn(() => popup);
+    const win = { open: nativeOpen };
+    const release = beginGooglePopupGesture(win, true);
+    expect(nativeOpen).toHaveBeenCalledWith("about:blank", "_blank");
+    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+    const handed = win.open(handler, "event", "width=500");
+    expect(handed).toBe(popup);
+    expect(popup.location.href).toBe(handler);
+    expect(popup.focus).toHaveBeenCalled();
+    win.open("https://other.example/", "_blank");
+    expect(nativeOpen).toHaveBeenLastCalledWith("https://other.example/", "_blank");
+    release();
+    expect(popup.close).not.toHaveBeenCalled();
+  });
+
+  it("closes an unused window and does nothing when a popup is not needed", () => {
+    const popup = popupWindow();
+    const win = { open: jest.fn(() => popup) };
+    beginGooglePopupGesture(win, true)();
+    expect(popup.close).toHaveBeenCalled();
+
+    const quiet = { open: jest.fn() };
+    expect(() => beginGooglePopupGesture(quiet, false)()).not.toThrow();
+    expect(quiet.open).not.toHaveBeenCalled();
+    expect(beginGooglePopupGesture(null, true)()).toBeUndefined();
   });
 });
 
@@ -141,12 +211,60 @@ describe("googleRedirectOutcome", () => {
   });
 
   it("explains a redirect that returned without a user", () => {
+    expect(googleRedirectOutcome(null, "login", {
+      hadPendingRedirect: true,
+      navigationType: "navigate",
+    })).toEqual({
+      status: "incomplete",
+      fromSignup: false,
+      message: GOOGLE_REDIRECT_INCOMPLETE,
+    });
     expect(googleRedirectOutcome(null, "login")).toEqual({
       status: "incomplete",
       fromSignup: false,
       message: GOOGLE_REDIRECT_INCOMPLETE,
     });
     expect(googleRedirectOutcome(null, "")).toEqual({ status: "none" });
+  });
+
+  it("does not treat a swipe-back or a leftover intent as a failed Google return", () => {
+    expect(isAbandonedGoogleRedirect({
+      hadPendingRedirect: true,
+      navigationType: "back_forward",
+    })).toBe(true);
+    expect(isAbandonedGoogleRedirect({ restoredFromCache: true, hadPendingRedirect: true })).toBe(true);
+    expect(isAbandonedGoogleRedirect({ hadPendingRedirect: false, navigationType: "navigate" })).toBe(true);
+    expect(isAbandonedGoogleRedirect({ hadPendingRedirect: true, navigationType: "navigate" })).toBe(false);
+    expect(isAbandonedGoogleRedirect()).toBe(false);
+
+    expect(googleRedirectOutcome(null, "login", {
+      hadPendingRedirect: false,
+      navigationType: "navigate",
+    })).toEqual({ status: "abandoned", fromSignup: false });
+    expect(googleRedirectOutcome(null, "signup", {
+      hadPendingRedirect: true,
+      navigationType: "back_forward",
+    })).toEqual({ status: "abandoned", fromSignup: true });
+    expect(googleRedirectOutcome({ user }, "login", {
+      hadPendingRedirect: false,
+      navigationType: "back_forward",
+    }).status).toBe("success");
+  });
+});
+
+describe("hadPendingGoogleRedirect", () => {
+  it("reads the flag Firebase stores before leaving for Google", () => {
+    const storage = memoryStorage();
+    const key = firebasePendingRedirectKey("api-key", "[DEFAULT]");
+    expect(key).toBe("firebase:pendingRedirect:api-key:[DEFAULT]");
+    expect(hadPendingGoogleRedirect(storage, "api-key", "[DEFAULT]")).toBe(false);
+    storage.setItem(key, JSON.stringify("true"));
+    expect(hadPendingGoogleRedirect(storage, "api-key", "[DEFAULT]")).toBe(true);
+    expect(hadPendingGoogleRedirect(storage, "", "[DEFAULT]")).toBe(false);
+    expect(readPageNavigationType({
+      getEntriesByType: () => [{ type: "back_forward" }],
+    })).toBe("back_forward");
+    expect(readPageNavigationType(null)).toBe("");
   });
 });
 
@@ -258,6 +376,26 @@ describe("startGoogleSignIn", () => {
     expect(shouldFallbackToRedirect(new Error("popup closed"))).toBe(false);
     expect(outcome).toEqual({ status: "redirecting" });
     expect(signInWithRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not turn a blocked iPhone popup into a redirect that cannot finish", async () => {
+    const storage = memoryStorage();
+    const blocked = Object.assign(new Error("blocked"), { code: "auth/popup-blocked" });
+    const signInWithRedirect = jest.fn(() => Promise.resolve());
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      allowRedirectFallback: false,
+      storage,
+      signInWithPopup: jest.fn(() => Promise.reject(blocked)),
+      signInWithRedirect,
+    });
+    expect(outcome).toEqual({ status: "error", error: blocked });
+    expect(signInWithRedirect).not.toHaveBeenCalled();
+    expect(peekGoogleRedirectIntent(storage)).toBe("");
   });
 
   it("does not redirect when the person closes the popup", async () => {

@@ -1,4 +1,4 @@
-/** Google sign-in helpers. Desktop keeps a popup; phones use a full-page redirect. */
+/** Google sign-in helpers. Desktop and mobile Safari/Chrome use a popup. In-app browsers redirect. */
 
 export const FIREBASE_AUTH_DOMAIN = "become-app-dde78.firebaseapp.com";
 
@@ -12,11 +12,11 @@ export const GOOGLE_REDIRECT_INCOMPLETE =
 
 /**
  * Google redirect always uses the Firebase auth domain, including on the live
- * site. Using the Vercel host as authDomain stopped Chromium — a desktop window
- * with an iPhone user agent sat on Connecting, then a network error, and never
- * left for Google. The firebaseapp.com handler is already authorized and reaches
- * the account picker. `hostname` is accepted so callers can pass the page host
- * without choosing a domain themselves.
+ * site. The Vercel host is not a registered Google redirect URI — Google answers
+ * https://become-app-rho.vercel.app/__/auth/handler with redirect_uri_mismatch —
+ * and an earlier build that used it never left for an account picker. The
+ * firebaseapp.com handler is the one Google already allows. `hostname` is
+ * accepted so callers can pass the page host without choosing a domain.
  */
 export function resolveAuthDomain(hostname) {
   void hostname;
@@ -32,31 +32,151 @@ export function readGoogleRedirectEnv(nav) {
   };
 }
 
-function narrowViewportPrefersRedirect(env) {
-  if (env && env.narrowViewport === true) return true;
-  if (env && env.narrowViewport === false) return false;
-  if (typeof window === "undefined" || !window.matchMedia) return false;
+function isInAppBrowser(userAgent) {
+  return /FBAN|FBAV|Instagram|Line\/|Twitter|Snapchat|TikTok|LinkedInApp|MicroMessenger|GSA\//i.test(userAgent || "");
+}
+
+function isIOSDevice(source) {
+  const userAgent = source.userAgent || "";
+  const platform = source.platform || "";
+  const maxTouchPoints = source.maxTouchPoints || 0;
+  return (
+    /iPad|iPhone|iPod/.test(userAgent) ||
+    (platform === "MacIntel" && maxTouchPoints > 1)
+  );
+}
+
+/**
+ * Home-screen Safari reports `navigator.standalone`. Firebase cannot finish a
+ * popup there (it opens a link and loses the window), so that case still redirects.
+ */
+function isStandaloneApp(source) {
+  if (source.standalone === true) return true;
+  if (source.standalone === false) return false;
   try {
-    return !!window.matchMedia("(max-width: 768px)").matches;
+    if (typeof navigator !== "undefined" && navigator.standalone) return true;
+  } catch (err) {
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Full-page redirect only where a popup cannot report back.
+ *
+ * iPhone Safari and Chrome used to redirect. Google does finish, but the
+ * credential is left in sessionStorage on become-app-dde78.firebaseapp.com.
+ * The Vercel page can only read that through a third-party frame, which iOS
+ * partitions, so getRedirectResult comes back empty and the login screen says
+ * sign-in didn't finish. A popup hands the credential to this page directly.
+ * authDomain stays on the Firebase host: the Vercel /__/auth/handler address
+ * is not an authorized Google redirect URI.
+ */
+export function prefersGoogleRedirect(env) {
+  const source = env || {};
+  const userAgent = source.userAgent || "";
+  if (isInAppBrowser(userAgent)) return true;
+  if (isStandaloneApp(source)) return true;
+  return false;
+}
+
+/** iOS and Android drop window.open once the click handler has awaited. Open first. */
+export function shouldPrimeGooglePopup(env) {
+  const source = env || {};
+  if (prefersGoogleRedirect(source)) return false;
+  const userAgent = source.userAgent || "";
+  return isIOSDevice(source) || /Android/i.test(userAgent);
+}
+
+/**
+ * A failed popup must not start a full-page redirect on these phones.
+ * The credential would be left on the Firebase auth domain, the return would
+ * have no user, and the login screen would show "didn't finish".
+ */
+export function redirectFallbackAllowed(env) {
+  const source = env || {};
+  if (isIOSDevice(source)) return false;
+  if (/Android/i.test(source.userAgent || "")) return false;
+  return true;
+}
+
+/**
+ * Open the Google window during the tap, then let Firebase navigate it.
+ * Returns a function that closes the window if Firebase never used it.
+ */
+export function beginGooglePopupGesture(win, prime) {
+  if (!prime || !win || typeof win.open !== "function") return function() {};
+  let opened = null;
+  try {
+    opened = win.open("about:blank", "_blank");
+  } catch (err) {
+    opened = null;
+  }
+  if (!opened) return function() {};
+  const original = win.open.bind(win);
+  let settled = false;
+  function restore() {
+    if (win.open === wrapped) win.open = original;
+  }
+  function wrapped(url, target, windowFeatures) {
+    restore();
+    settled = true;
+    try {
+      if (url) opened.location.href = url;
+    } catch (err) {
+      return original(url, target, windowFeatures);
+    }
+    try { opened.focus(); } catch (err) { /* The window is already open. */ }
+    return opened;
+  }
+  win.open = wrapped;
+  return function release() {
+    restore();
+    if (!settled) {
+      try { opened.close(); } catch (err) { /* already closed */ }
+    }
+  };
+}
+
+/** Firebase writes this before leaving, as JSON `"true"`, and clears it on return. */
+export function firebasePendingRedirectKey(apiKey, appName) {
+  return "firebase:pendingRedirect:" + apiKey + ":" + (appName || "[DEFAULT]");
+}
+
+export function hadPendingGoogleRedirect(storage, apiKey, appName) {
+  try {
+    if (!storage || !apiKey) return false;
+    const raw = storage.getItem(firebasePendingRedirectKey(apiKey, appName));
+    if (raw == null) return false;
+    const value = JSON.parse(raw);
+    return value === true || value === "true";
   } catch (err) {
     return false;
   }
 }
 
-/** Popups fail on phones, in-app browsers, and phone-width windows. */
-export function prefersGoogleRedirect(env) {
-  const source = env || {};
-  if (narrowViewportPrefersRedirect(source)) return true;
-  const userAgent = source.userAgent || "";
-  const platform = source.platform || "";
-  const maxTouchPoints = source.maxTouchPoints || 0;
-  const isIOS =
-    /iPad|iPhone|iPod/.test(userAgent) ||
-    (platform === "MacIntel" && maxTouchPoints > 1);
-  const isAndroid = /Android/i.test(userAgent);
-  const isMobile = /Mobi|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
-  const isInAppBrowser = /FBAN|FBAV|Instagram|Line\/|Twitter|Snapchat|TikTok|LinkedInApp|MicroMessenger|GSA\//i.test(userAgent);
-  return isIOS || isAndroid || isMobile || isInAppBrowser;
+export function readPageNavigationType(performanceObj) {
+  try {
+    const perf = performanceObj || (typeof performance !== "undefined" ? performance : null);
+    if (!perf || !perf.getEntriesByType) return "";
+    const entries = perf.getEntriesByType("navigation");
+    const nav = entries && entries[0];
+    return (nav && nav.type) || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+/**
+ * A leftover intent with no Firebase redirect in flight, a swipe-back
+ * (back/forward or bfcache), is not a failed return from Google.
+ */
+export function isAbandonedGoogleRedirect(context) {
+  if (!context) return false;
+  if (context.restoredFromCache) return true;
+  if (context.navigationType === "back_forward") return true;
+  if (context.hadPendingRedirect === false) return true;
+  return false;
 }
 
 export function browserSessionStorage() {
@@ -113,7 +233,7 @@ export function profileFromGoogleUser(user) {
   };
 }
 
-export function googleRedirectOutcome(result, intent) {
+export function googleRedirectOutcome(result, intent, context) {
   const user = result && result.user;
   if (user) {
     return {
@@ -123,6 +243,9 @@ export function googleRedirectOutcome(result, intent) {
     };
   }
   if (intent === "signup" || intent === "login") {
+    if (isAbandonedGoogleRedirect(context)) {
+      return { status: "abandoned", fromSignup: intent === "signup" };
+    }
     return {
       status: "incomplete",
       fromSignup: intent === "signup",
@@ -148,7 +271,9 @@ export function shouldFallbackToRedirect(error) {
 }
 
 /**
- * Popup on desktop. Redirect on mobile, and when the browser blocks the popup.
+ * Popup on desktop and on iPhone/Android browsers. Redirect only where a popup
+ * cannot report back. A blocked popup on a phone must not fall through to
+ * redirect: that return is what shows "didn't finish".
  * `redirectAuth` uses the Firebase auth domain and may be the same instance as
  * `popupAuth`. Email and password stay on `popupAuth`.
  */
@@ -158,6 +283,7 @@ export async function startGoogleSignIn({
   provider,
   fromSignup,
   useRedirect,
+  allowRedirectFallback,
   storage,
   signInWithPopup,
   signInWithRedirect,
@@ -176,7 +302,9 @@ export async function startGoogleSignIn({
     const result = await signInWithPopup(popupAuth, provider);
     return { status: "success", user: result && result.user };
   } catch (error) {
-    if (!shouldFallbackToRedirect(error)) return { status: "error", error };
+    if (allowRedirectFallback === false || !shouldFallbackToRedirect(error)) {
+      return { status: "error", error };
+    }
     rememberGoogleRedirectIntent(storage, fromSignup);
     try {
       await signInWithRedirect(redirectAuth, provider);

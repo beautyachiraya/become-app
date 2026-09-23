@@ -1,11 +1,12 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { auth, googleRedirectAuth, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
+import { auth, googleRedirectAuth, firebaseApiKey, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
 import { signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signOut, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import {
-  prefersGoogleRedirect, readGoogleRedirectEnv, browserSessionStorage, peekGoogleRedirectIntent,
-  takeGoogleRedirectIntent, startGoogleSignIn, loadGoogleRedirectResult, adoptRedirectUser,
-  googleRedirectOutcome, profileFromGoogleUser,
+  prefersGoogleRedirect, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
+  browserSessionStorage, peekGoogleRedirectIntent, takeGoogleRedirectIntent, clearGoogleRedirectIntent,
+  hadPendingGoogleRedirect, readPageNavigationType, startGoogleSignIn, loadGoogleRedirectResult,
+  adoptRedirectUser, googleRedirectOutcome, profileFromGoogleUser, GOOGLE_REDIRECT_INCOMPLETE,
 } from "./googleAuth";
 import { createDataClient, formatWriteError, formatProfilePhotoSaveError } from "./userData";
 import ProfileAvatarImage from "./profileAvatar";
@@ -418,6 +419,12 @@ export default function Become(){
 
   useEffect(()=>{
     let active=true;
+    const storage=browserSessionStorage();
+    // Read before getRedirectResult, which clears Firebase's pending flag.
+    const redirectContext={
+      hadPendingRedirect:hadPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]"),
+      navigationType:readPageNavigationType(),
+    };
     function showGoogleRedirectError(intent, error){
       const msg=mapAuthError(error,"google");
       if(intent==="signup"){
@@ -430,7 +437,7 @@ export default function Become(){
     loadGoogleRedirectResult(googleRedirectAuth, getRedirectResult)
       .then(async(result)=>{
         if(!active)return;
-        const intent=takeGoogleRedirectIntent(browserSessionStorage());
+        const intent=takeGoogleRedirectIntent(storage);
         let user=null;
         try{
           user=await adoptRedirectUser({
@@ -448,7 +455,7 @@ export default function Become(){
           return;
         }
         if(!active)return;
-        const outcome=googleRedirectOutcome(user?{user}:null, intent);
+        const outcome=googleRedirectOutcome(user?{user}:null, intent, redirectContext);
         if(outcome.status==="success"){
           setProfileForm(outcome.profile);
           setJustSignedUp(outcome.fromSignup);
@@ -476,6 +483,20 @@ export default function Become(){
         if(active)setGoogleRedirectPending(false);
       });
     return()=>{active=false;};
+  },[]);
+
+  useEffect(()=>{
+    function onPageShow(event){
+      if(!event.persisted)return;
+      // Swipe-back restores this screen with the old "didn't finish" text still on it.
+      clearGoogleRedirectIntent(browserSessionStorage());
+      setGoogleRedirectPending(false);
+      setAuthBusy(function(busy){return busy==="google"?"":busy;});
+      setLoginMessage(function(msg){return msg===GOOGLE_REDIRECT_INCOMPLETE?"":msg;});
+      setSignupMessage(function(msg){return msg===GOOGLE_REDIRECT_INCOMPLETE?"":msg;});
+    }
+    window.addEventListener("pageshow", onPageShow);
+    return()=>{window.removeEventListener("pageshow", onPageShow);};
   },[]);
 
   useEffect(()=>{
@@ -557,16 +578,28 @@ export default function Become(){
     setLoginMessage("");
     setSignupMessage("");
     setAuthBusy("google");
-    const outcome=await startGoogleSignIn({
-      popupAuth:auth,
-      redirectAuth:googleRedirectAuth,
-      provider:googleProvider,
-      fromSignup,
-      useRedirect:prefersGoogleRedirect(readGoogleRedirectEnv()),
-      storage:browserSessionStorage(),
-      signInWithPopup,
-      signInWithRedirect,
-    });
+    const env=readGoogleRedirectEnv();
+    const useRedirect=prefersGoogleRedirect(env);
+    // Must run before the first await. iOS only allows window.open inside the tap.
+    const releasePopup=beginGooglePopupGesture(window, shouldPrimeGooglePopup(env));
+    let outcome;
+    try{
+      outcome=await startGoogleSignIn({
+        popupAuth:auth,
+        redirectAuth:googleRedirectAuth,
+        provider:googleProvider,
+        fromSignup,
+        useRedirect,
+        allowRedirectFallback:redirectFallbackAllowed(env),
+        storage:browserSessionStorage(),
+        signInWithPopup,
+        signInWithRedirect,
+      });
+    }catch(error){
+      outcome={status:"error", error};
+    }finally{
+      releasePopup();
+    }
     if(outcome.status==="success"&&outcome.user){
       setProfileForm(profileFromGoogleUser(outcome.user));
       setJustSignedUp(!!fromSignup);
