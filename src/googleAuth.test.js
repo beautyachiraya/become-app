@@ -60,15 +60,41 @@ describe("prefersGoogleRedirect", () => {
     })).toBe(true);
   });
 
-  it("keeps a popup on desktop browsers", () => {
-    expect(prefersGoogleRedirect({
+  it("keeps a popup on a wide desktop browser", () => {
+    const desktop = {
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       platform: "MacIntel",
       maxTouchPoints: 0,
-    })).toBe(false);
+      narrowViewport: false,
+    };
+    expect(prefersGoogleRedirect(desktop)).toBe(false);
     expect(prefersGoogleRedirect({
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      narrowViewport: false,
     })).toBe(false);
+  });
+
+  it("uses redirect on a phone-width window even when the browser looks like desktop", () => {
+    const desktop = {
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    };
+    expect(prefersGoogleRedirect({ ...desktop, narrowViewport: true })).toBe(true);
+    expect(prefersGoogleRedirect({
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
+      narrowViewport: false,
+    })).toBe(true);
+
+    const original = window.matchMedia;
+    try {
+      window.matchMedia = (query) => ({ matches: String(query).indexOf("max-width: 768px") !== -1, media: query });
+      expect(prefersGoogleRedirect(desktop)).toBe(true);
+      window.matchMedia = () => ({ matches: false, media: "" });
+      expect(prefersGoogleRedirect(desktop)).toBe(false);
+    } finally {
+      window.matchMedia = original;
+    }
   });
 });
 
@@ -188,6 +214,50 @@ describe("startGoogleSignIn", () => {
     expect(outcome).toEqual({ status: "redirecting" });
     expect(signInWithRedirect).toHaveBeenCalledWith(redirectAuth, provider);
     expect(peekGoogleRedirectIntent(storage)).toBe("signup");
+  });
+
+  it.each([
+    ["auth/network-request-failed", "Firebase: Error (auth/network-request-failed)."],
+    ["auth/internal-error", "Firebase: Error (auth/internal-error)."],
+    ["auth/cancelled-popup-request", "Firebase: Error (auth/cancelled-popup-request)."],
+  ])("falls back to redirect when the popup fails with %s", async (code, message) => {
+    const storage = memoryStorage();
+    const error = Object.assign(new Error(message), { code });
+    const signInWithPopup = jest.fn(() => Promise.reject(error));
+    const signInWithRedirect = jest.fn(() => Promise.resolve());
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      storage,
+      signInWithPopup,
+      signInWithRedirect,
+    });
+    expect(shouldFallbackToRedirect(error)).toBe(true);
+    expect(outcome).toEqual({ status: "redirecting" });
+    expect(signInWithRedirect).toHaveBeenCalledWith(redirectAuth, provider);
+  });
+
+  it("falls back to redirect when the popup error message mentions a network failure", async () => {
+    const storage = memoryStorage();
+    const error = new Error("Network error");
+    const signInWithRedirect = jest.fn(() => Promise.resolve());
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      storage,
+      signInWithPopup: jest.fn(() => Promise.reject(error)),
+      signInWithRedirect,
+    });
+    expect(shouldFallbackToRedirect(error)).toBe(true);
+    expect(shouldFallbackToRedirect(new Error("popup closed"))).toBe(false);
+    expect(outcome).toEqual({ status: "redirecting" });
+    expect(signInWithRedirect).toHaveBeenCalledTimes(1);
   });
 
   it("does not redirect when the person closes the popup", async () => {
