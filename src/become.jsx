@@ -7,7 +7,8 @@ import {
   takeGoogleRedirectIntent, startGoogleSignIn, loadGoogleRedirectResult, adoptRedirectUser,
   googleRedirectOutcome, profileFromGoogleUser,
 } from "./googleAuth";
-import { createDataClient, formatWriteError } from "./userData";
+import { createDataClient, formatWriteError, formatProfilePhotoSaveError } from "./userData";
+import ProfileAvatarImage from "./profileAvatar";
 import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment, isJournal, lastSessionDate } from "./packageStatus";
 import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment, explicitPackKind } from "./treatmentForm";
 import TreatmentFormFields from "./TreatmentFormFields";
@@ -484,7 +485,9 @@ export default function Become(){
       if(cancelled)return;
       if(profile){
         setProfileForm(profile);
-        if(profile.photoURL)setProfilePhoto(profile.photoURL);
+        setProfilePhoto(profile.photoURL||null);
+      }else{
+        setProfilePhoto(null);
       }
       const normalized=(loaded||[]).map(t=>normalizeTreatment(t));
       setTreatments(prev=>mergeTreatmentsById(prev, normalized));
@@ -773,24 +776,30 @@ async function saveEditSession(){
       setIsSaving(false);
     }
   }
+  function showPhotoSaveError(error){
+    const message=formatProfilePhotoSaveError(error);
+    setSyncError(message);
+    alert(message);
+  }
   async function uploadProfilePhoto(file){
     if(!file)return;
-    const preview=new FileReader();
-    preview.onload=ev=>setProfilePhoto(ev.target.result);
-    preview.readAsDataURL(file);
     const user=auth.currentUser;
-    if(!user)return;
+    if(!user){
+      showPhotoSaveError(new Error("Please sign in and try again."));
+      return;
+    }
     setIsSaving(true);
     try{
       const pRef=ref(storage,"users/"+user.uid+"/profile");
       await uploadBytes(pRef,file);
       const url=await getDownloadURL(pRef);
+      if(!url)throw new Error("No download link came back.");
       await dataClient.writeProfile(user.uid,{photoURL:url},{merge:true});
       setProfilePhoto(url);
       setProfileForm(prev=>({...prev,photoURL:url}));
       setSyncError("");
     }catch(e){
-      showWriteError("Couldn't save your photo", e);
+      showPhotoSaveError(e);
     }finally{
       setIsSaving(false);
     }
@@ -1111,10 +1120,13 @@ async function saveEditSession(){
                   {/* Tappable avatar */}
                   <div style={{position:"relative",flexShrink:0}} onClick={()=>profilePhotoRef.current&&profilePhotoRef.current.click()}>
                     <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(180,145,95,0.32)",overflow:"hidden",cursor:"pointer"}}>
-                      {profilePhoto
-                        ? <img src={profilePhoto} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="Profile"/>
-                        : <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:400,color:"#FAF7F2"}}>S</span>
-                      }
+                      <ProfileAvatarImage
+                        key={profilePhoto||""}
+                        profilePhotoURL={profilePhoto}
+                        authPhotoURL={auth.currentUser&&auth.currentUser.photoURL}
+                        initial="S"
+                        initialStyle={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:400,color:"#FAF7F2"}}
+                      />
                     </div>
                     {/* Camera badge */}
                     <div style={{position:"absolute",bottom:0,right:0,width:24,height:24,borderRadius:"50%",background:"#B4915F",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(180,145,95,0.4)",border:"2px solid #FAF7F2",cursor:"pointer"}}>
@@ -1124,7 +1136,7 @@ async function saveEditSession(){
                       </svg>
                     </div>
                     <input ref={profilePhotoRef} type="file" accept="image/*" style={{display:"none"}}
-                      onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;uploadProfilePhoto(f);}}/>
+                      onChange={e=>{const input=e.target;const f=input.files&&input.files[0];input.value="";if(!f)return;uploadProfilePhoto(f);}}/>
                   </div>
                   <div>
                     <p style={{fontSize:17,fontWeight:600}}>{profileForm.name}</p>
@@ -2060,10 +2072,13 @@ async function saveEditSession(){
                   <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,marginBottom:4}}>
                     <div style={{position:"relative"}} onClick={()=>profilePhotoRef.current&&profilePhotoRef.current.click()}>
                       <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#B4915F,#D4B080)",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",cursor:"pointer",boxShadow:"0 4px 16px rgba(180,145,95,0.3)"}}>
-                        {profilePhoto
-                          ?<img src={profilePhoto} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="Profile"/>
-                          :<span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:400,color:"#FAF7F2"}}>{profileForm.name[0]||"S"}</span>
-                        }
+                        <ProfileAvatarImage
+                          key={profilePhoto||""}
+                          profilePhotoURL={profilePhoto}
+                          authPhotoURL={auth.currentUser&&auth.currentUser.photoURL}
+                          initial={profileForm.name[0]||"S"}
+                          initialStyle={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:400,color:"#FAF7F2"}}
+                        />
                       </div>
                       <div style={{position:"absolute",bottom:0,right:0,width:24,height:24,borderRadius:"50%",background:"#B4915F",display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #FAF7F2",cursor:"pointer"}}>
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
