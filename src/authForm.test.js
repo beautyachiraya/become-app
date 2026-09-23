@@ -83,6 +83,13 @@ describe("landing copy", () => {
     expect(LANDING_HEADLINE.toLowerCase()).toContain("expire");
     expect(LANDING_BULLETS).toHaveLength(3);
   });
+
+  it("describes adding a package without a promo or paid choice", () => {
+    const doorstep = [LANDING_HEADLINE, SIGNUP_NEXT_COPY, ...LANDING_BULLETS].join("\n");
+    expect(LANDING_BULLETS[0]).toBe("Add a package when you buy one");
+    expect(doorstep.toLowerCase()).not.toContain("promo");
+    expect(doorstep.toLowerCase()).not.toContain("paid");
+  });
 });
 
 describe("package expiry defaults", () => {

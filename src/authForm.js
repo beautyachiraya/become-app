@@ -9,7 +9,7 @@ export const LANDING_HEADLINE =
   "Track your beauty packages in one place — how many sessions you have left, at which clinic, and when they expire.";
 
 export const LANDING_BULLETS = [
-  "Add a package when you buy (promo or paid)",
+  "Add a package when you buy one",
   "Log each visit and watch the count go down",
   "Buy more when a pack is finished — history stays",
 ];
