@@ -4,6 +4,37 @@ export function formatWriteError(action, error) {
   return `${action}: ${detail}`;
 }
 
+/**
+ * Firestore permission-denied, including the "Missing or insufficient permissions" text.
+ * Storage errors are a different problem and are not treated as a visit-rules denial.
+ */
+export function isFirestorePermissionDenied(error) {
+  if (!error || typeof error !== "object") {
+    const text = String(error || "").toLowerCase();
+    return text.includes("permission-denied") || text.includes("insufficient permissions");
+  }
+  const code = String(error.code || "").toLowerCase();
+  const message = String(error.message || "").toLowerCase();
+  if (code.includes("storage/")) return false;
+  if (code === "permission-denied" || code.endsWith("/permission-denied")) return true;
+  if (message.includes("missing or insufficient permissions")) return true;
+  if (message.includes("permission-denied")) return true;
+  return false;
+}
+
+/**
+ * Plan / update / cancel / load for users/{uid}/visits.
+ * A rules denial gets plain language. Other failures keep the usual action plus detail.
+ */
+export function formatVisitWriteError(action, error) {
+  console.error(`[Become] ${action}`, error);
+  if (isFirestorePermissionDenied(error)) {
+    return `${action}. This account isn't allowed to store visits yet.`;
+  }
+  const detail = (error && error.message) ? error.message : "Please try again.";
+  return `${action}: ${detail}`;
+}
+
 function cleanPhotoUrl(value) {
   return typeof value === "string" ? value.trim() : "";
 }

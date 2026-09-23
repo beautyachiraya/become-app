@@ -14,6 +14,40 @@ export const LANDING_BULLETS = [
   "Buy more when a pack is finished — history stays",
 ];
 
+export const ACCEPT_BOTH_HINT = "Please accept both to continue";
+export const GOOGLE_SIGNUP_HINT =
+  "Accept the Privacy Policy and Terms below to sign up with Google.";
+
+/**
+ * The accept-both line and the Google hint stay hidden until someone tries
+ * to continue without both boxes checked. Once both are accepted, both hints clear.
+ */
+export function signupAcceptanceHints({ attempted, privacyAccepted, termsAccepted } = {}) {
+  if ((privacyAccepted && termsAccepted) || !attempted) {
+    return { google: "", acceptBoth: "" };
+  }
+  if (attempted === "google") {
+    return { google: GOOGLE_SIGNUP_HINT, acceptBoth: ACCEPT_BOTH_HINT };
+  }
+  return { google: "", acceptBoth: ACCEPT_BOTH_HINT };
+}
+
+/** Country chosen on signup, plus the local number with its dial code when it isn't already there. */
+export function profileFromSignup(form) {
+  const name = form && form.name ? String(form.name) : "";
+  const email = form && form.email ? String(form.email).trim() : "";
+  const local = form && form.phone ? String(form.phone).trim() : "";
+  const countryCode = form && form.countryCode ? String(form.countryCode).trim() : "";
+  const dialMatch = countryCode.match(/^\+\d+/);
+  const dial = dialMatch ? dialMatch[0] : "";
+  const compact = local.replace(/\s+/g, "");
+  let phone = local;
+  if (local && dial && !compact.startsWith(dial)) phone = `${dial} ${local}`;
+  const profile = { name, email, phone };
+  if (countryCode) profile.countryCode = countryCode;
+  return profile;
+}
+
 export const EMPTY_SIGNIN_ERROR = "Enter your email and password.";
 export const WRONG_CREDENTIALS_ERROR =
   "Email or password doesn't match. Try again or reset your password.";
