@@ -64,6 +64,16 @@ export function mapAuthError(err, context) {
       return "";
     case "auth/popup-blocked":
       return "Pop-up was blocked. Allow pop-ups and try Google again.";
+    case "auth/unauthorized-domain":
+      return "Google sign-in isn't available from this address. Try email and password.";
+    case "auth/web-storage-unsupported":
+      return "This browser is blocking sign-in storage. Turn off private browsing, or use email and password.";
+    case "auth/operation-not-supported-in-this-environment":
+      return "Google sign-in isn't supported in this browser. Try Safari or Chrome, or use email and password.";
+    case "auth/redirect-cancelled-by-user":
+      return "";
+    case "auth/missing-google-credential":
+      return "Google sign-in couldn't be finished. Please try again.";
     case "auth/account-exists-with-different-credential":
       return "This email is already used with a different sign-in method.";
     default:
