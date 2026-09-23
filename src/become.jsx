@@ -3,7 +3,9 @@ import { auth, db, storage } from "./firebase"; import { ref, uploadBytes, getDo
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import { createDataClient, formatWriteError } from "./userData";
-import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, packKind, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment } from "./packageStatus";
+import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment } from "./packageStatus";
+import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment, explicitPackKind } from "./treatmentForm";
+import TreatmentFormFields from "./TreatmentFormFields";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
 
@@ -144,21 +146,6 @@ function fmtShort(d){if(!d)return"—";return new Date(d).toLocaleDateString("en
 function addDays(d,n){if(!d)return null;const dt=new Date(d);dt.setDate(dt.getDate()+n);return dt.toISOString().split("T")[0];}
 function getNext(t){const sessions=coerceSessions(t&&t.sessions);if(!sessions.length)return null;const last=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date))[0];return addDays(last.date,t.frequency);}
 function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";}
-function KindPills({value,onChange,promoLabel,paidLabel,kindLabel}){
-  return(
-    <div>
-      <span className="lbl">{kindLabel}</span>
-      <div style={{display:"flex",gap:8}}>
-        {[{k:"paid",label:paidLabel},{k:"promo",label:promoLabel}].map(opt=>(
-          <button key={opt.k} type="button" onClick={()=>onChange(opt.k)}
-            style={{flex:1,padding:"11px 12px",borderRadius:14,border:value===opt.k?"1.5px solid #B4915F":"1.5px solid #EDE5D8",background:value===opt.k?"rgba(180,145,95,0.1)":"#FAF7F2",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:600,color:value===opt.k?"#8C6E40":"#7A6A58"}}>
-            {opt.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // Mock OAuth overlay — no longer opened by Sign in / Sign up.
 // Google uses Firebase popup; Facebook is not wired, so that CTA is hidden.
@@ -362,7 +349,7 @@ export default function Become(){
   const [showTerms,setShowTerms]=useState(false);
   const [privacyAccepted,setPrivacyAccepted]=useState(false);
   const [termsAccepted,setTermsAccepted]=useState(false);
-  const [form,setForm]=useState({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:"",kind:"paid"});
+  const [form,setForm]=useState(emptyTreatmentForm);
   const [logForm,setLogForm]=useState({date:new Date().toISOString().split("T")[0],note:"",photo:null});
   const [syncError,setSyncError]=useState("");
   const [isSaving,setIsSaving]=useState(false);
@@ -544,9 +531,7 @@ async function logSession(){
     }));
   }
   async function addTreatment(){
-    const n=form.name==="Other"?form.customName:form.name;
-    const freq=form.frequencyLabel==="Custom"?parseInt(form.customDays):form.frequency;
-    const newT={id:Date.now(),name:n,clinic:form.clinic,brandUnit:form.brandUnit,totalSessions:parseInt(form.totalSessions),frequency:freq,frequencyLabel:form.frequencyLabel,expiryDate:form.expiryDate,palette:(treatmentsRef.current||[]).length%PALETTE.length,notes:form.notes,kind:form.kind==="promo"?"promo":"paid",sessions:[]};
+    const newT=buildNewTreatment(form,{id:Date.now(),palette:(treatmentsRef.current||[]).length%PALETTE.length});
     const user=auth.currentUser;
     setIsSaving(true);
     try{
@@ -554,7 +539,7 @@ async function logSession(){
       setTreatments(prev=>[...prev,newT]);
       setSyncError("");
       setShowAdd(false);
-      setForm({name:"Laser Hair Removal",customName:"",clinic:"",brandUnit:"",totalSessions:"",frequency:30,frequencyLabel:"Monthly",customDays:"",expiryDate:"",notes:"",kind:"paid"});
+      setForm(emptyTreatmentForm());
     }catch(e){
       showWriteError("Couldn't save your treatment", e);
     }finally{
@@ -579,25 +564,20 @@ async function logSession(){
   function buyMore(pack){
     const known=TREATMENT_TYPES.includes(pack.name);
     setForm({
+      ...emptyTreatmentForm(),
       name:known?pack.name:"Other",
       customName:known?"":pack.name,
       clinic:pack.clinic||"",
       brandUnit:pack.brandUnit||"",
-      totalSessions:"",
       frequency:pack.frequency||30,
       frequencyLabel:pack.frequencyLabel||"Monthly",
-      customDays:"",
-      expiryDate:"",
-      notes:"",
-      kind:"paid",
     });
     setShowAdd(true);
   }
-  function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||"",kind:packKind(t)});setShowEdit(true);}
+  function openEdit(t){setEditForm({name:t.name,clinic:t.clinic,brandUnit:t.brandUnit||"",totalSessions:String(t.totalSessions),frequency:t.frequency,frequencyLabel:t.frequencyLabel,customDays:"",expiryDate:t.expiryDate||"",notes:t.notes||""});setShowEdit(true);}
 async function saveEdit(){
     if(!editForm||!sel)return;
-    const freq=editForm.frequencyLabel==="Custom"?parseInt(editForm.customDays):editForm.frequency;
-    const updatedT={...sel,name:editForm.name,clinic:editForm.clinic,brandUnit:editForm.brandUnit,totalSessions:parseInt(editForm.totalSessions),frequency:freq,frequencyLabel:editForm.frequencyLabel,expiryDate:editForm.expiryDate,notes:editForm.notes,kind:editForm.kind==="promo"?"promo":"paid"};
+    const updatedT=buildEditedTreatment(sel,editForm);
     const user=auth.currentUser;
     setIsSaving(true);
     try{
@@ -1303,6 +1283,7 @@ async function saveEditSession(){
                     const expDays=daysUntil(pack.expiryDate);
                     const next=getNext(pack);
                     const sortedS=coerceSessions(pack.sessions).slice().sort((a,b)=>new Date(a.date)-new Date(b.date));
+                    const storedKind=explicitPackKind(pack);
                     return(
                       <div key={pack.id} className={`tcard pop p${Math.min(i+3,5)}`} style={{padding:"22px 20px"}} onClick={()=>goToDetail(pack.id)}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
@@ -1314,7 +1295,7 @@ async function saveEditSession(){
                               <p style={{fontSize:15,fontWeight:600,marginBottom:2}}>{pack.name}</p>
                               <p style={{fontSize:12,color:"#9A8A78"}}>{pack.clinic}</p>
                               {pack.brandUnit&&<p style={{fontSize:11,color:"#B4915F",fontWeight:500,marginTop:2}}>{pack.brandUnit}</p>}
-                              <span className={`pill ${packKind(pack)==="promo"?"pill-promo":"pill-paid"}`} style={{marginTop:6}}>{packKind(pack)==="promo"?t("promo"):t("paid")}</span>
+                              {storedKind&&<span className={`pill ${storedKind==="promo"?"pill-promo":"pill-paid"}`} style={{marginTop:6}}>{t(storedKind)}</span>}
                               {pack.notes&&<p style={{fontSize:11,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{pack.notes}</p>}
                             </div>
                           </div>
@@ -1397,7 +1378,7 @@ async function saveEditSession(){
                   {historyItems.map((item)=>{
                     const pack=item.pack;
                     const p=PALETTE[(pack.palette||0)%PALETTE.length];
-                    const kind=item.kind==="promo"?"promo":"paid";
+                    const storedKind=explicitPackKind(pack);
                     if(item.type==="pack"){
                       return(
                         <div key={item.id} className="tcard" style={{padding:"18px 18px"}} onClick={()=>goToDetail(pack.id)}>
@@ -1411,7 +1392,7 @@ async function saveEditSession(){
                                 <p style={{fontSize:15,fontWeight:600,marginBottom:2}}>{pack.name}</p>
                                 <p style={{fontSize:12,color:"#9A8A78"}}>{pack.clinic}</p>
                                 <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
-                                  <span className={`pill ${kind==="promo"?"pill-promo":"pill-paid"}`}>{t(kind)}</span>
+                                  {storedKind&&<span className={`pill ${storedKind==="promo"?"pill-promo":"pill-paid"}`}>{t(storedKind)}</span>}
                                   {item.expired&&<span className="pill pill-danger">{t("expired")}</span>}
                                   {item.usedUp&&<span className="pill pill-done">{t("used_up")}</span>}
                                 </div>
@@ -1438,7 +1419,7 @@ async function saveEditSession(){
                             <p style={{fontSize:12,color:"#9A8A78",marginTop:2}}>{t("completed_session")} · {pack.clinic}</p>
                             {item.session&&item.session.note&&<p style={{fontSize:12,color:"#7A6A58",marginTop:6}}>{item.session.note}</p>}
                           </div>
-                          <span className={`pill ${kind==="promo"?"pill-promo":"pill-paid"}`}>{t(kind)}</span>
+                          {storedKind&&<span className={`pill ${storedKind==="promo"?"pill-promo":"pill-paid"}`}>{t(storedKind)}</span>}
                         </div>
                       </div>
                     );
@@ -1728,29 +1709,16 @@ async function saveEditSession(){
                 <div className="mhandle"/>
                 <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,marginBottom:4}}>New Treatment</h2>
                 <p style={{fontSize:13,color:"#9A8A78",marginBottom:24}}>Add a package from any clinic</p>
-                <div style={{display:"flex",flexDirection:"column",gap:16}}>
-                  <div><span className="lbl">Treatment type</span>
-                    <select className="inp" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}>
-                      {TREATMENT_TYPES.map(t=><option key={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  {form.name==="Other"&&<div><span className="lbl">Treatment name</span><input className="inp" placeholder="e.g. Sculptra" value={form.customName} onChange={e=>setForm({...form,customName:e.target.value})}/></div>}
-                  <div><span className="lbl">Clinic / Provider</span><input className="inp" placeholder="e.g. Glow Clinic Bangkok" value={form.clinic} onChange={e=>setForm({...form,clinic:e.target.value})}/></div>
-                  <div><span className="lbl">Brand, Unit or cc (optional)</span><input className="inp" placeholder="e.g. Botox 20 units · Juvederm 1cc" value={form.brandUnit} onChange={e=>setForm({...form,brandUnit:e.target.value})}/></div>
-                  <KindPills value={form.kind||"paid"} onChange={k=>setForm({...form,kind:k})} promoLabel={t("promo")} paidLabel={t("paid")} kindLabel={t("pack_kind")}/>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    <div><span className="lbl">Total sessions</span><input className="inp" type="number" min="1" placeholder="e.g. 6" value={form.totalSessions} onChange={e=>setForm({...form,totalSessions:e.target.value})}/></div>
-                    <div><span className="lbl">Expiry date</span><input className="inp" type="date" value={form.expiryDate} onChange={e=>setForm({...form,expiryDate:e.target.value})}/></div>
-                  </div>
-                  <div><span className="lbl">How often do you go?</span>
-                    <select className="inp" value={form.frequencyLabel} onChange={e=>{const f=FREQUENCIES.find(x=>x.label===e.target.value);setForm({...form,frequencyLabel:e.target.value,frequency:f?f.days:30});}}>
-                      {FREQUENCIES.map(f=><option key={f.label}>{f.label}</option>)}
-                    </select>
-                  </div>
-                  {form.frequencyLabel==="Custom"&&<div><span className="lbl">Every how many days?</span><input className="inp" type="number" placeholder="e.g. 45" value={form.customDays} onChange={e=>setForm({...form,customDays:e.target.value})}/></div>}
-                  <div><span className="lbl">Notes (optional)</span><textarea className="inp" rows={2} placeholder="Area treated, units, add-ons..." value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></div>
-                  <button className="btn btn-c" style={{marginTop:4}} onClick={addTreatment} disabled={!form.totalSessions||!form.clinic||isSaving}>{isSaving?"Saving…":"Add to My Diary"}</button>
-                </div>
+                <TreatmentFormFields
+                  form={form}
+                  setForm={setForm}
+                  treatmentTypes={TREATMENT_TYPES}
+                  frequencies={FREQUENCIES}
+                  allowCustomName
+                  onSubmit={addTreatment}
+                  isSaving={isSaving}
+                  submitLabel="Add to My Diary"
+                />
               </div>
             </div>
           )}
@@ -1869,48 +1837,16 @@ async function saveEditSession(){
                     <p style={{fontSize:13,color:"#9A8A78",marginTop:2}}>Update your package details</p>
                   </div>
                 </div>
-                <div style={{display:"flex",flexDirection:"column",gap:16}}>
-                  <div><span className="lbl">Treatment type</span>
-                    <select className="inp" value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})}>
-                      {TREATMENT_TYPES.map(t=><option key={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div><span className="lbl">Clinic / Provider</span>
-                    <input className="inp" placeholder="e.g. Glow Clinic Bangkok" value={editForm.clinic} onChange={e=>setEditForm({...editForm,clinic:e.target.value})}/>
-                  </div>
-                  <div><span className="lbl">Brand, Unit or cc (optional)</span>
-                    <input className="inp" placeholder="e.g. Botox 20 units · Juvederm 1cc" value={editForm.brandUnit} onChange={e=>setEditForm({...editForm,brandUnit:e.target.value})}/>
-                  </div>
-                  <KindPills value={editForm.kind||"paid"} onChange={k=>setEditForm({...editForm,kind:k})} promoLabel={t("promo")} paidLabel={t("paid")} kindLabel={t("pack_kind")}/>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    <div><span className="lbl">Total sessions</span>
-                      <input className="inp" type="number" min="1" placeholder="e.g. 6" value={editForm.totalSessions} onChange={e=>setEditForm({...editForm,totalSessions:e.target.value})}/>
-                    </div>
-                    <div><span className="lbl">Expiry date</span>
-                      <input className="inp" type="date" value={editForm.expiryDate} onChange={e=>setEditForm({...editForm,expiryDate:e.target.value})}/>
-                    </div>
-                  </div>
-                  <div><span className="lbl">How often do you go?</span>
-                    <select className="inp" value={editForm.frequencyLabel} onChange={e=>{const f=FREQUENCIES.find(x=>x.label===e.target.value);setEditForm({...editForm,frequencyLabel:e.target.value,frequency:f?f.days:30});}}>
-                      {FREQUENCIES.map(f=><option key={f.label}>{f.label}</option>)}
-                    </select>
-                  </div>
-                  {editForm.frequencyLabel==="Custom"&&(
-                    <div><span className="lbl">Every how many days?</span>
-                      <input className="inp" type="number" placeholder="e.g. 45" value={editForm.customDays} onChange={e=>setEditForm({...editForm,customDays:e.target.value})}/>
-                    </div>
-                  )}
-                  <div><span className="lbl">Notes (optional)</span>
-                    <textarea className="inp" rows={2} placeholder="Area treated, units, add-ons..." value={editForm.notes} onChange={e=>setEditForm({...editForm,notes:e.target.value})}/>
-                  </div>
-                  <button className="btn btn-c" style={{marginTop:4}} onClick={saveEdit} disabled={!editForm.totalSessions||!editForm.clinic||isSaving}>
-                    {isSaving?"Saving…":"Save Changes"}
-                  </button>
-                  <button onClick={()=>setShowEdit(false)}
-                    style={{background:"none",border:"none",color:"#9A8A78",fontSize:13,fontFamily:"inherit",cursor:"pointer",fontWeight:500,padding:"4px 0"}}>
-                    Cancel
-                  </button>
-                </div>
+                <TreatmentFormFields
+                  form={editForm}
+                  setForm={setEditForm}
+                  treatmentTypes={TREATMENT_TYPES}
+                  frequencies={FREQUENCIES}
+                  onSubmit={saveEdit}
+                  isSaving={isSaving}
+                  submitLabel="Save Changes"
+                  onCancel={()=>setShowEdit(false)}
+                />
               </div>
             </div>
           )}
