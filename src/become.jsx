@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { auth, googleRedirectAuth, firebaseApiKey, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
-import { signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signOut, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
+import { signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signOut, onAuthStateChanged, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import {
   prefersGoogleRedirect, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
@@ -195,7 +195,7 @@ function usuallyLine(treatment, prefix){
 function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";}
 
 // Mock OAuth overlay — no longer opened by Sign in / Sign up.
-// Google uses a Firebase popup on desktop and a redirect on mobile. Facebook is not wired.
+// Google uses a Firebase popup. On a phone that window is opened during the tap. Facebook is not wired.
 function OAuthScreen({provider,onSuccess,onCancel}){
   const [stage,setStage]=useState("browser");
   const [progress,setProgress]=useState(0);
@@ -416,6 +416,23 @@ export default function Become(){
   const sortedSessions=sel?coerceSessions(sel.sessions).slice().sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
   const selCounts=sel?packSessionCounts(sel):{used:0,total:0,remaining:0};
+
+  useEffect(()=>{
+    // Firebase restores a signed-in person after the Google tab closes and this
+    // page loads again. The screen would otherwise open on login even though
+    // the account is already signed in.
+    const unsub=onAuthStateChanged(auth, (user)=>{
+      if(!user)return;
+      setProfileForm((prev)=>{
+        if(prev&&(prev.name||prev.email))return prev;
+        return profileFromGoogleUser(user);
+      });
+      setAuthScreen("app");
+      setGoogleRedirectPending(false);
+      setAuthBusy((busy)=>busy==="google"?"":busy);
+    });
+    return unsub;
+  },[]);
 
   useEffect(()=>{
     let active=true;

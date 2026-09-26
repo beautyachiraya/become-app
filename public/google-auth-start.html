@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Continue with Google</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #FAF7F2;
+      color: #7A6A58;
+      font-family: "DM Sans", sans-serif;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <p>Connecting to Google…</p>
+  <script>
+    // Keep this in step with handlerUrlFromPopupMessage / takeStoredHandlerUrl in src/googleAuth.js.
+    (function () {
+      var KEY = "become.googleHandlerUrl";
+      var TYPE = "become-google-nav";
+      var HANDLER_ORIGIN = "https://become-app-dde78.firebaseapp.com";
+      var HANDLER_PATH = "/__/auth/handler";
+      function allowed(url) {
+        try {
+          var parsed = new URL(url);
+          return parsed.origin === HANDLER_ORIGIN && parsed.pathname === HANDLER_PATH;
+        } catch (err) {
+          return false;
+        }
+      }
+      function readStored() {
+        try { return sessionStorage.getItem(KEY) || ""; } catch (err) { return ""; }
+      }
+      function clearStored() {
+        try { sessionStorage.removeItem(KEY); } catch (err) {}
+      }
+      function go(url) {
+        if (!allowed(url)) return false;
+        clearStored();
+        location.replace(url);
+        return true;
+      }
+      if (go(readStored())) return;
+      window.addEventListener("message", function (event) {
+        if (event.origin !== location.origin) return;
+        var data = event.data || {};
+        if (data.type !== TYPE) return;
+        go(data.url || readStored());
+      });
+      var timer = setInterval(function () {
+        if (go(readStored())) clearInterval(timer);
+      }, 50);
+      setTimeout(function () { clearInterval(timer); }, 20000);
+    })();
+  </script>
+</body>
+</html>

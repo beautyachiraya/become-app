@@ -1,4 +1,4 @@
-/** Google sign-in helpers. Desktop and mobile Safari/Chrome use a popup. In-app browsers redirect. */
+/** Google sign-in helpers. Desktop and phone browsers use a popup. In-app browsers redirect. */
 
 export const FIREBASE_AUTH_DOMAIN = "become-app-dde78.firebaseapp.com";
 
@@ -80,6 +80,13 @@ export function prefersGoogleRedirect(env) {
   return false;
 }
 
+/** Same-origin page the phone popup loads first, then leaves for the Firebase handler. */
+export const GOOGLE_AUTH_START_PATH = "/google-auth-start.html";
+
+export const GOOGLE_POPUP_URL_KEY = "become.googleHandlerUrl";
+
+export const GOOGLE_POPUP_NAV_MESSAGE = "become-google-nav";
+
 /** iOS and Android drop window.open once the click handler has awaited. Open first. */
 export function shouldPrimeGooglePopup(env) {
   const source = env || {};
@@ -100,15 +107,57 @@ export function redirectFallbackAllowed(env) {
   return true;
 }
 
+/** Only the Firebase auth handler may be opened from the phone popup. */
+export function isFirebaseAuthHandlerUrl(url) {
+  if (typeof url !== "string" || !url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === "https://" + FIREBASE_AUTH_DOMAIN
+      && parsed.pathname === "/__/auth/handler";
+  } catch (err) {
+    return false;
+  }
+}
+
 /**
- * Open the Google window during the tap, then let Firebase navigate it.
+ * The start page asks for this before it leaves for Google.
+ * A message from another site, or any URL that is not the Firebase handler, is ignored.
+ */
+export function handlerUrlFromPopupMessage(event, expectedOrigin) {
+  if (!event || event.origin !== expectedOrigin) return "";
+  const data = event.data || {};
+  if (data.type !== GOOGLE_POPUP_NAV_MESSAGE) return "";
+  return isFirebaseAuthHandlerUrl(data.url) ? data.url : "";
+}
+
+export function takeStoredHandlerUrl(storage) {
+  try {
+    if (!storage) return "";
+    const url = storage.getItem(GOOGLE_POPUP_URL_KEY);
+    if (!isFirebaseAuthHandlerUrl(url)) return "";
+    storage.removeItem(GOOGLE_POPUP_URL_KEY);
+    return url;
+  } catch (err) {
+    return "";
+  }
+}
+
+/**
+ * Open a same-origin window during the tap. When Firebase later asks for a
+ * popup, hand it the handler address and let that window navigate itself.
+ *
+ * Setting location from here on an about:blank window drops window.opener on
+ * iPhone. The Google handler then cannot see this page, stores the credential
+ * where Become cannot read it, and the login screen comes back signed out.
  * Returns a function that closes the window if Firebase never used it.
  */
 export function beginGooglePopupGesture(win, prime) {
   if (!prime || !win || typeof win.open !== "function") return function() {};
+  const origin = win.location && win.location.origin ? win.location.origin : "";
+  const startUrl = origin ? origin + GOOGLE_AUTH_START_PATH : "about:blank";
   let opened = null;
   try {
-    opened = win.open("about:blank", "_blank");
+    opened = win.open(startUrl, "become-google-auth");
   } catch (err) {
     opened = null;
   }
@@ -121,11 +170,26 @@ export function beginGooglePopupGesture(win, prime) {
   function wrapped(url, target, windowFeatures) {
     restore();
     settled = true;
-    try {
-      if (url) opened.location.href = url;
-    } catch (err) {
-      return original(url, target, windowFeatures);
+    const handler = isFirebaseAuthHandlerUrl(url) ? url : "";
+    let handedOff = false;
+    if (handler && origin) {
+      try {
+        if (opened.sessionStorage) opened.sessionStorage.setItem(GOOGLE_POPUP_URL_KEY, handler);
+        handedOff = true;
+      } catch (err) { /* The start page can still take a message. */ }
+      try {
+        opened.postMessage({ type: GOOGLE_POPUP_NAV_MESSAGE, url: handler }, origin);
+        handedOff = true;
+      } catch (err) { /* Fall through if the window will not take a message. */ }
     }
+    if (!handedOff) {
+      try {
+        if (url) opened.location.href = url;
+      } catch (err) {
+        return original(url, target, windowFeatures);
+      }
+    }
+    try { if (target && target !== "_blank") opened.name = target; } catch (err) { /* name is optional */ }
     try { opened.focus(); } catch (err) { /* The window is already open. */ }
     return opened;
   }

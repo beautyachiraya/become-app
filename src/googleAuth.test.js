@@ -7,6 +7,12 @@ import {
   prefersGoogleRedirect,
   shouldPrimeGooglePopup,
   redirectFallbackAllowed,
+  GOOGLE_AUTH_START_PATH,
+  GOOGLE_POPUP_URL_KEY,
+  GOOGLE_POPUP_NAV_MESSAGE,
+  isFirebaseAuthHandlerUrl,
+  handlerUrlFromPopupMessage,
+  takeStoredHandlerUrl,
   beginGooglePopupGesture,
   hadPendingGoogleRedirect,
   firebasePendingRedirectKey,
@@ -128,26 +134,93 @@ describe("redirectFallbackAllowed", () => {
   });
 });
 
+describe("isFirebaseAuthHandlerUrl", () => {
+  const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+
+  it("accepts only the Firebase handler", () => {
+    expect(isFirebaseAuthHandlerUrl(handler)).toBe(true);
+    expect(isFirebaseAuthHandlerUrl("https://become-app-dde78.firebaseapp.com/__/auth/handler")).toBe(true);
+    expect(isFirebaseAuthHandlerUrl("https://become-app-dde78.firebaseapp.com/__/auth/handler.evil")).toBe(false);
+    expect(isFirebaseAuthHandlerUrl("https://become-app-rho.vercel.app/__/auth/handler")).toBe(false);
+    expect(isFirebaseAuthHandlerUrl("https://evil.example/__/auth/handler")).toBe(false);
+    expect(isFirebaseAuthHandlerUrl("")).toBe(false);
+  });
+
+  it("reads a handler address from the start page message or its storage", () => {
+    const origin = "https://become-app-rho.vercel.app";
+    expect(handlerUrlFromPopupMessage({
+      origin,
+      data: { type: GOOGLE_POPUP_NAV_MESSAGE, url: handler },
+    }, origin)).toBe(handler);
+    expect(handlerUrlFromPopupMessage({
+      origin: "https://evil.example",
+      data: { type: GOOGLE_POPUP_NAV_MESSAGE, url: handler },
+    }, origin)).toBe("");
+    expect(handlerUrlFromPopupMessage({
+      origin,
+      data: { type: GOOGLE_POPUP_NAV_MESSAGE, url: "https://evil.example/" },
+    }, origin)).toBe("");
+
+    const storage = memoryStorage();
+    storage.setItem(GOOGLE_POPUP_URL_KEY, handler);
+    expect(takeStoredHandlerUrl(storage)).toBe(handler);
+    expect(takeStoredHandlerUrl(storage)).toBe("");
+    storage.setItem(GOOGLE_POPUP_URL_KEY, "https://evil.example/");
+    expect(takeStoredHandlerUrl(storage)).toBe("");
+  });
+
+  it("keeps the phone start page on the same handler check", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const html = fs.readFileSync(path.join(__dirname, "../public/google-auth-start.html"), "utf8");
+    expect(html).toContain(GOOGLE_POPUP_URL_KEY);
+    expect(html).toContain(GOOGLE_POPUP_NAV_MESSAGE);
+    expect(html).toContain("https://" + FIREBASE_AUTH_DOMAIN);
+    expect(html).toContain('"/__/auth/handler"');
+  });
+});
+
 describe("beginGooglePopupGesture", () => {
   function popupWindow() {
+    const data = {};
     return {
       closed: false,
+      name: "",
       location: { href: "about:blank" },
+      sessionStorage: {
+        setItem(key, value) { data[key] = String(value); },
+        getItem(key) { return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null; },
+        removeItem(key) { delete data[key]; },
+      },
+      postMessage: jest.fn(),
       focus: jest.fn(),
       close: jest.fn(),
+      data,
     };
   }
 
-  it("navigates the window opened during the tap when Firebase opens one later", () => {
+  it("lets the phone window open the handler itself so the opener stays attached", () => {
     const popup = popupWindow();
     const nativeOpen = jest.fn(() => popup);
-    const win = { open: nativeOpen };
+    const win = {
+      location: { origin: "https://become-app-rho.vercel.app" },
+      open: nativeOpen,
+    };
     const release = beginGooglePopupGesture(win, true);
-    expect(nativeOpen).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(nativeOpen).toHaveBeenCalledWith(
+      "https://become-app-rho.vercel.app" + GOOGLE_AUTH_START_PATH,
+      "become-google-auth"
+    );
     const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
     const handed = win.open(handler, "event", "width=500");
     expect(handed).toBe(popup);
-    expect(popup.location.href).toBe(handler);
+    expect(popup.location.href).toBe("about:blank");
+    expect(popup.data[GOOGLE_POPUP_URL_KEY]).toBe(handler);
+    expect(popup.postMessage).toHaveBeenCalledWith(
+      { type: GOOGLE_POPUP_NAV_MESSAGE, url: handler },
+      "https://become-app-rho.vercel.app"
+    );
+    expect(takeStoredHandlerUrl(popup.sessionStorage)).toBe(handler);
     expect(popup.focus).toHaveBeenCalled();
     win.open("https://other.example/", "_blank");
     expect(nativeOpen).toHaveBeenLastCalledWith("https://other.example/", "_blank");
@@ -157,7 +230,10 @@ describe("beginGooglePopupGesture", () => {
 
   it("closes an unused window and does nothing when a popup is not needed", () => {
     const popup = popupWindow();
-    const win = { open: jest.fn(() => popup) };
+    const win = {
+      location: { origin: "https://become-app-rho.vercel.app" },
+      open: jest.fn(() => popup),
+    };
     beginGooglePopupGesture(win, true)();
     expect(popup.close).toHaveBeenCalled();
 
