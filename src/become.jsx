@@ -598,6 +598,8 @@ export default function Become(){
     const env=readGoogleRedirectEnv();
     const useRedirect=prefersGoogleRedirect(env);
     // Must run before the first await. iOS only allows window.open inside the tap.
+    // Desktop also wraps window.open so a closed Google window can end Connecting
+    // even when Cross-Origin-Opener-Policy hides window.closed from Firebase.
     const releasePopup=beginGooglePopupGesture(window, shouldPrimeGooglePopup(env));
     let outcome;
     try{
@@ -611,6 +613,7 @@ export default function Become(){
         storage:browserSessionStorage(),
         signInWithPopup,
         signInWithRedirect,
+        getPopup:function(){return releasePopup.popup();},
       });
     }catch(error){
       outcome={status:"error", error};
@@ -628,6 +631,8 @@ export default function Become(){
         else setLoginMessage(msg);
       }
     }
+    // "cancelled" is a closed popup or an unreadable window.closed. The button
+    // comes back with no red error. A real failure still sets a message above.
     if(outcome.status!=="redirecting")setAuthBusy("");
   }
   async function handlePasswordReset(){

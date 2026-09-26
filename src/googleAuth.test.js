@@ -14,6 +14,9 @@ import {
   handlerUrlFromPopupMessage,
   takeStoredHandlerUrl,
   beginGooglePopupGesture,
+  readPopupClosed,
+  watchPopupDismissal,
+  finishPopupSignIn,
   hadPendingGoogleRedirect,
   firebasePendingRedirectKey,
   readPageNavigationType,
@@ -241,6 +244,105 @@ describe("beginGooglePopupGesture", () => {
     expect(() => beginGooglePopupGesture(quiet, false)()).not.toThrow();
     expect(quiet.open).not.toHaveBeenCalled();
     expect(beginGooglePopupGesture(null, true)()).toBeUndefined();
+    expect(beginGooglePopupGesture(null, true).popup()).toBeNull();
+  });
+
+  it("remembers the desktop popup Firebase opens without a primed window", () => {
+    const popup = popupWindow();
+    const nativeOpen = jest.fn(() => popup);
+    const win = {
+      location: { origin: "https://become-app-rho.vercel.app" },
+      open: nativeOpen,
+    };
+    const release = beginGooglePopupGesture(win, false);
+    expect(nativeOpen).not.toHaveBeenCalled();
+    expect(release.popup()).toBeNull();
+    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+    expect(win.open(handler, "firebase", "width=500")).toBe(popup);
+    expect(nativeOpen).toHaveBeenCalledWith(handler, "firebase", "width=500");
+    expect(release.popup()).toBe(popup);
+    expect(popup.location.href).toBe("about:blank");
+    release();
+    expect(popup.close).not.toHaveBeenCalled();
+    expect(win.open).toBe(nativeOpen);
+  });
+});
+
+describe("popup close detection", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("reads closed, open, and a COOP throw that hides window.closed", () => {
+    expect(readPopupClosed(null)).toBe("closed");
+    expect(readPopupClosed({ closed: false })).toBe("open");
+    expect(readPopupClosed({ closed: true })).toBe("closed");
+    expect(readPopupClosed({
+      get closed() {
+        throw new Error("Cross-Origin-Opener-Policy policy would block the window.closed call.");
+      },
+    })).toBe("unavailable");
+  });
+
+  it("waits while the chooser is open, then resolves when it closes", async () => {
+    jest.useFakeTimers();
+    let popup = null;
+    const watch = watchPopupDismissal(() => popup, { intervalMs: 20 });
+    let state = "";
+    watch.promise.then((value) => { state = value; });
+    jest.advanceTimersByTime(100);
+    await Promise.resolve();
+    expect(state).toBe("");
+    popup = { closed: false };
+    jest.advanceTimersByTime(100);
+    await Promise.resolve();
+    expect(state).toBe("");
+    popup = { closed: true };
+    jest.advanceTimersByTime(20);
+    await expect(watch.promise).resolves.toBe("closed");
+  });
+
+  it("stops waiting when sign-in finishes first", async () => {
+    jest.useFakeTimers();
+    const watch = watchPopupDismissal(() => ({ closed: false }), { intervalMs: 20 });
+    let state = "";
+    watch.promise.then((value) => { state = value; });
+    watch.stop();
+    jest.advanceTimersByTime(200);
+    await Promise.resolve();
+    expect(state).toBe("");
+  });
+
+  it("cancels when the popup is already closed and sign-in never settles", async () => {
+    const outcome = await finishPopupSignIn({
+      signIn: () => new Promise(() => {}),
+      getPopup: () => ({ closed: true }),
+      intervalMs: 1000,
+    });
+    expect(outcome).toEqual({ status: "cancelled", reason: "closed" });
+  });
+
+  it("cancels when COOP makes window.closed unreadable", async () => {
+    const outcome = await finishPopupSignIn({
+      signIn: () => new Promise(() => {}),
+      getPopup: () => ({
+        get closed() {
+          throw new Error("Cross-Origin-Opener-Policy policy would block the window.closed call.");
+        },
+      }),
+      intervalMs: 1000,
+    });
+    expect(outcome).toEqual({ status: "cancelled", reason: "unavailable" });
+  });
+
+  it("returns the user when the popup stays open", async () => {
+    const user = { displayName: "A", email: "a@b.com" };
+    const outcome = await finishPopupSignIn({
+      signIn: () => Promise.resolve({ user }),
+      getPopup: () => ({ closed: false }),
+      intervalMs: 1000,
+    });
+    expect(outcome).toEqual({ status: "success", user });
   });
 });
 
@@ -489,8 +591,69 @@ describe("startGoogleSignIn", () => {
       signInWithPopup,
       signInWithRedirect,
     });
-    expect(outcome).toEqual({ status: "error", error: closed });
+    expect(outcome).toEqual({ status: "cancelled" });
     expect(signInWithRedirect).not.toHaveBeenCalled();
+    expect(peekGoogleRedirectIntent(storage)).toBe("");
+  });
+
+  it("restores login when the popup closes before Firebase notices", async () => {
+    const storage = memoryStorage();
+    const signInWithRedirect = jest.fn();
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      allowRedirectFallback: true,
+      storage,
+      signInWithPopup: () => new Promise(() => {}),
+      signInWithRedirect,
+      getPopup: () => ({ closed: true }),
+    });
+    expect(outcome).toEqual({ status: "cancelled" });
+    expect(signInWithRedirect).not.toHaveBeenCalled();
+  });
+
+  it("restores login when COOP blocks window.closed and sign-in never settles", async () => {
+    const storage = memoryStorage();
+    const signInWithRedirect = jest.fn();
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: true,
+      useRedirect: false,
+      allowRedirectFallback: false,
+      storage,
+      signInWithPopup: () => new Promise(() => {}),
+      signInWithRedirect,
+      getPopup: () => ({
+        get closed() {
+          throw new Error("Cross-Origin-Opener-Policy policy would block the window.closed call.");
+        },
+      }),
+    });
+    expect(outcome).toEqual({ status: "cancelled" });
+    expect(signInWithRedirect).not.toHaveBeenCalled();
+    expect(peekGoogleRedirectIntent(storage)).toBe("");
+  });
+
+  it("still returns the Google user while the popup is open", async () => {
+    const user = { displayName: "A", email: "a@b.com" };
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      storage: memoryStorage(),
+      signInWithPopup: jest.fn(() => Promise.resolve({ user })),
+      signInWithRedirect: jest.fn(),
+      getPopup: () => ({ closed: false }),
+      intervalMs: 5000,
+    });
+    expect(outcome).toEqual({ status: "success", user });
   });
 
   it("clears the stored intent when redirect fails to start", async () => {
