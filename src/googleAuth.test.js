@@ -11,6 +11,8 @@ import {
   GOOGLE_POPUP_URL_KEY,
   GOOGLE_POPUP_NAV_MESSAGE,
   isFirebaseAuthHandlerUrl,
+  handlerUrlFromStartHash,
+  startPageHashUrl,
   handlerUrlFromPopupMessage,
   takeStoredHandlerUrl,
   beginGooglePopupGesture,
@@ -18,6 +20,7 @@ import {
   watchPopupDismissal,
   finishPopupSignIn,
   hadPendingGoogleRedirect,
+  clearPendingGoogleRedirect,
   firebasePendingRedirectKey,
   readPageNavigationType,
   isAbandonedGoogleRedirect,
@@ -172,6 +175,18 @@ describe("isFirebaseAuthHandlerUrl", () => {
     expect(takeStoredHandlerUrl(storage)).toBe("");
   });
 
+  it("reads the handler from the start-page hash and ignores anything else", () => {
+    const origin = "https://become-app-rho.vercel.app";
+    const hashed = startPageHashUrl(origin, handler);
+    expect(hashed.startsWith(origin + GOOGLE_AUTH_START_PATH + "#")).toBe(true);
+    expect(isFirebaseAuthHandlerUrl(hashed)).toBe(false);
+    expect(handlerUrlFromStartHash("#" + hashed.split("#")[1])).toBe(handler);
+    expect(handlerUrlFromStartHash(handler)).toBe(handler);
+    expect(handlerUrlFromStartHash("#https%3A%2F%2Fevil.example%2F")).toBe("");
+    expect(handlerUrlFromStartHash("")).toBe("");
+    expect(startPageHashUrl(origin, "https://become-app-rho.vercel.app/__/auth/handler")).toBe("");
+  });
+
   it("keeps the phone start page on the same handler check", () => {
     const fs = require("fs");
     const path = require("path");
@@ -180,6 +195,76 @@ describe("isFirebaseAuthHandlerUrl", () => {
     expect(html).toContain(GOOGLE_POPUP_NAV_MESSAGE);
     expect(html).toContain("https://" + FIREBASE_AUTH_DOMAIN);
     expect(html).toContain('"/__/auth/handler"');
+    expect(html).toContain("location.replace(url)");
+    expect(html).toContain("readHash");
+  });
+
+  it("has the start page navigate itself to the Firebase handler", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const vm = require("vm");
+    const html = fs.readFileSync(path.join(__dirname, "../public/google-auth-start.html"), "utf8");
+    const match = html.match(/<script>([\s\S]*)<\/script>/);
+    expect(match).toBeTruthy();
+    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+
+    function runStartPage(setup) {
+      const location = {
+        origin: "https://become-app-rho.vercel.app",
+        hash: setup.hash || "",
+        replace: jest.fn(),
+      };
+      const sessionData = { ...(setup.session || {}) };
+      const localData = { ...(setup.local || {}) };
+      const timers = [];
+      const sandbox = {
+        location,
+        sessionStorage: {
+          getItem(key) { return Object.prototype.hasOwnProperty.call(sessionData, key) ? sessionData[key] : null; },
+          removeItem(key) { delete sessionData[key]; },
+        },
+        localStorage: {
+          getItem(key) { return Object.prototype.hasOwnProperty.call(localData, key) ? localData[key] : null; },
+          removeItem(key) { delete localData[key]; },
+        },
+        window: {},
+        setInterval(fn) { timers.push(fn); return timers.length; },
+        setTimeout: () => 2,
+        clearInterval() {},
+        URL,
+        decodeURIComponent,
+      };
+      sandbox.timers = timers;
+      sandbox.window = sandbox;
+      sandbox.window.addEventListener = jest.fn();
+      vm.createContext(sandbox);
+      vm.runInContext(match[1], sandbox);
+      return { location, sessionData, localData, sandbox };
+    }
+
+    const fromHash = runStartPage({
+      hash: "#" + encodeURIComponent(handler),
+    });
+    expect(fromHash.location.replace).toHaveBeenCalledTimes(1);
+    expect(fromHash.location.replace).toHaveBeenCalledWith(handler);
+
+    const fromStorage = runStartPage({
+      session: { [GOOGLE_POPUP_URL_KEY]: handler },
+    });
+    expect(fromStorage.location.replace).toHaveBeenCalledWith(handler);
+    expect(fromStorage.sessionData[GOOGLE_POPUP_URL_KEY]).toBeUndefined();
+
+    const ignored = runStartPage({
+      hash: "#" + encodeURIComponent("https://evil.example/__/auth/handler"),
+    });
+    expect(ignored.location.replace).not.toHaveBeenCalled();
+
+    const later = runStartPage({});
+    expect(later.location.replace).not.toHaveBeenCalled();
+    expect(later.sandbox.timers.length).toBe(1);
+    later.location.hash = "#" + encodeURIComponent(handler);
+    later.sandbox.timers[0]();
+    expect(later.location.replace).toHaveBeenCalledWith(handler);
   });
 });
 
@@ -205,30 +290,109 @@ describe("beginGooglePopupGesture", () => {
   it("lets the phone window open the handler itself so the opener stays attached", () => {
     const popup = popupWindow();
     const nativeOpen = jest.fn(() => popup);
+    const origin = "https://become-app-rho.vercel.app";
     const win = {
-      location: { origin: "https://become-app-rho.vercel.app" },
+      location: { origin },
       open: nativeOpen,
     };
     const release = beginGooglePopupGesture(win, true);
     expect(nativeOpen).toHaveBeenCalledWith(
-      "https://become-app-rho.vercel.app" + GOOGLE_AUTH_START_PATH,
+      origin + GOOGLE_AUTH_START_PATH,
       "become-google-auth"
     );
     const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+    const assigned = [];
+    popup.location = {
+      _href: "about:blank",
+      get href() { return this._href; },
+      set href(value) {
+        assigned.push(value);
+        this._href = value;
+      },
+    };
     const handed = win.open(handler, "event", "width=500");
     expect(handed).toBe(popup);
-    expect(popup.location.href).toBe("about:blank");
-    expect(popup.data[GOOGLE_POPUP_URL_KEY]).toBe(handler);
-    expect(popup.postMessage).toHaveBeenCalledWith(
-      { type: GOOGLE_POPUP_NAV_MESSAGE, url: handler },
-      "https://become-app-rho.vercel.app"
-    );
-    expect(takeStoredHandlerUrl(popup.sessionStorage)).toBe(handler);
+    const hashed = startPageHashUrl(origin, handler);
+    expect(popup.location.href).toBe(hashed);
+    expect(assigned).toEqual([hashed]);
+    expect(assigned.some((value) => isFirebaseAuthHandlerUrl(value))).toBe(false);
+    expect(handlerUrlFromStartHash("#" + popup.location.href.split("#")[1])).toBe(handler);
+    expect(popup.location.href.startsWith(origin + GOOGLE_AUTH_START_PATH)).toBe(true);
+    expect(popup.postMessage).not.toHaveBeenCalled();
     expect(popup.focus).toHaveBeenCalled();
     win.open("https://other.example/", "_blank");
     expect(nativeOpen).toHaveBeenLastCalledWith("https://other.example/", "_blank");
     release();
     expect(popup.close).not.toHaveBeenCalled();
+  });
+
+  it("replaces the popup with the start-page hash and does not assign the handler if that throws", () => {
+    const origin = "https://become-app-rho.vercel.app";
+    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+    const hashed = startPageHashUrl(origin, handler);
+
+    const replaced = popupWindow();
+    replaced.location.replace = jest.fn();
+    const win = {
+      location: { origin },
+      open: jest.fn(() => replaced),
+    };
+    beginGooglePopupGesture(win, true);
+    expect(win.open(handler, "firebase", "width=500")).toBe(replaced);
+    expect(replaced.location.replace).toHaveBeenCalledWith(hashed);
+    expect(replaced.location.href).toBe("about:blank");
+    expect(isFirebaseAuthHandlerUrl(replaced.location.href)).toBe(false);
+
+    const fallback = popupWindow();
+    const assigned = [];
+    fallback.location = {
+      _href: "about:blank",
+      replace() { throw new Error("replace blocked"); },
+      get href() { return this._href; },
+      set href(value) {
+        assigned.push(value);
+        this._href = value;
+      },
+    };
+    const winFallback = {
+      location: { origin },
+      open: jest.fn(() => fallback),
+    };
+    beginGooglePopupGesture(winFallback, true);
+    expect(winFallback.open(handler, "firebase")).toBe(fallback);
+    expect(fallback.location.href).toBe(hashed);
+    expect(assigned).toEqual([hashed]);
+    expect(assigned.some((value) => value === handler)).toBe(false);
+  });
+
+  it("hands the handler through storage and a message when the popup location cannot change", () => {
+    const origin = "https://become-app-rho.vercel.app";
+    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+    const popup = popupWindow();
+    const local = {};
+    popup.localStorage = {
+      setItem(key, value) { local[key] = String(value); },
+      getItem(key) { return Object.prototype.hasOwnProperty.call(local, key) ? local[key] : null; },
+    };
+    popup.location = {
+      _href: "about:blank",
+      replace() { throw new Error("replace blocked"); },
+      get href() { return this._href; },
+      set href(_value) { throw new Error("href blocked"); },
+    };
+    const win = {
+      location: { origin },
+      open: jest.fn(() => popup),
+    };
+    beginGooglePopupGesture(win, true);
+    expect(win.open(handler, "firebase")).toBe(popup);
+    expect(popup.location.href).toBe("about:blank");
+    expect(popup.data[GOOGLE_POPUP_URL_KEY]).toBe(handler);
+    expect(local[GOOGLE_POPUP_URL_KEY]).toBe(handler);
+    expect(popup.postMessage).toHaveBeenCalledWith(
+      { type: GOOGLE_POPUP_NAV_MESSAGE, url: handler },
+      origin
+    );
   });
 
   it("closes an unused window and does nothing when a popup is not needed", () => {
@@ -428,6 +592,34 @@ describe("googleRedirectOutcome", () => {
       navigationType: "back_forward",
     }).status).toBe("success");
   });
+
+  it("does not show didn't finish for an empty popup return on a phone", () => {
+    expect(isAbandonedGoogleRedirect({
+      popupReturn: true,
+      hadPendingRedirect: true,
+      navigationType: "navigate",
+    })).toBe(true);
+    expect(googleRedirectOutcome(null, "login", {
+      popupReturn: true,
+      hadPendingRedirect: true,
+      navigationType: "navigate",
+    })).toEqual({ status: "abandoned", fromSignup: false });
+    expect(googleRedirectOutcome(null, "signup", {
+      popupReturn: true,
+      hadPendingRedirect: true,
+      navigationType: "navigate",
+    })).toEqual({ status: "abandoned", fromSignup: true });
+    expect(googleRedirectOutcome({ user }, "login", {
+      popupReturn: true,
+      hadPendingRedirect: true,
+      navigationType: "navigate",
+    }).status).toBe("success");
+    expect(googleRedirectOutcome(null, "login", {
+      popupReturn: false,
+      hadPendingRedirect: true,
+      navigationType: "navigate",
+    }).message).toBe(GOOGLE_REDIRECT_INCOMPLETE);
+  });
 });
 
 describe("hadPendingGoogleRedirect", () => {
@@ -443,6 +635,13 @@ describe("hadPendingGoogleRedirect", () => {
       getEntriesByType: () => [{ type: "back_forward" }],
     })).toBe("back_forward");
     expect(readPageNavigationType(null)).toBe("");
+    clearPendingGoogleRedirect(storage, "api-key", "[DEFAULT]");
+    expect(hadPendingGoogleRedirect(storage, "api-key", "[DEFAULT]")).toBe(false);
+    const blocked = {
+      removeItem() { throw new Error("blocked"); },
+    };
+    expect(() => clearPendingGoogleRedirect(blocked, "api-key", "[DEFAULT]")).not.toThrow();
+    expect(() => clearPendingGoogleRedirect(null, "api-key", "[DEFAULT]")).not.toThrow();
   });
 });
 
@@ -469,6 +668,25 @@ describe("startGoogleSignIn", () => {
     expect(signInWithPopup).not.toHaveBeenCalled();
     expect(signInWithRedirect).toHaveBeenCalledWith(redirectAuth, provider);
     expect(peekGoogleRedirectIntent(storage)).toBe("login");
+  });
+
+  it("clears a leftover redirect flag before the iPhone Safari popup", async () => {
+    const storage = memoryStorage();
+    rememberGoogleRedirectIntent(storage, false);
+    const user = { displayName: "A", email: "a@b.com" };
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      allowRedirectFallback: false,
+      storage,
+      signInWithPopup: jest.fn(() => Promise.resolve({ user })),
+      signInWithRedirect: jest.fn(),
+    });
+    expect(outcome).toEqual({ status: "success", user });
+    expect(peekGoogleRedirectIntent(storage)).toBe("");
   });
 
   it("uses a popup on desktop and returns the Google user", async () => {
