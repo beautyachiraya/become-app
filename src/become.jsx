@@ -49,22 +49,10 @@ const TREATMENT_ICONS = {
   "Ultherapy":"⟡","Sculptra":"✾","PRP":"◆","Other":"✧",
 };
 
-const AFTERCARE = {
-  "Laser Hair Removal":{dos:["Apply aloe vera or soothing gel to calm redness","Keep area clean and moisturised","Wear SPF 50+ sunscreen daily for at least 2 weeks","Use cool compresses if area feels warm"],donts:["No sun exposure for 2 weeks — non-negotiable","No hot showers, saunas or steam rooms for 48 hours","No waxing, threading, or plucking between sessions","No perfumed products on treated area for 48 hours","No exercise for 24 hours"],tip:"Shedding of hair occurs 1–3 weeks after — this is normal, not regrowth. Gently exfoliate from day 5 onwards."},
-  "Botox":{dos:["Stay upright for at least 4 hours after treatment","Gently move treated muscles to help distribution","Sleep on your back the night of treatment","Stay well hydrated"],donts:["No lying down or bending forward for 4 hours","No touching or rubbing treated area for 24 hours","No intense exercise for 24 hours","No alcohol for 24 hours","No facials or RF treatments for 2 weeks","No extreme heat for 2 weeks"],tip:"Full results appear in 7–14 days. If results look uneven after 2 weeks, contact your practitioner for a review."},
-  "Filler":{dos:["Apply ice gently to reduce swelling (wrapped in cloth)","Stay hydrated","Sleep elevated the first night","Arnica gel or supplements help with bruising"],donts:["No touching the area for 6 hours","No strenuous exercise for 24–48 hours","No extreme heat for 2 weeks","No dental work for 2 weeks (lip filler)","No blood thinners unless prescribed","No alcohol for 24 hours"],tip:"Swelling and bruising for 3–7 days is completely normal. Final results are visible after 2 weeks."},
-  "Hydrafacial":{dos:["Apply SPF 30+ outdoors","Keep skin hydrated with gentle fragrance-free moisturiser","Drink plenty of water to maximise results"],donts:["No makeup for at least 6 hours","No exfoliants (AHA/BHA/retinol) for 48–72 hours","No waxing or facial treatments for 48 hours","No intense exercise for 24 hours","No hot water on face for 24 hours"],tip:"Skin may look slightly pink for a few hours — totally normal. Your glow peaks around day 2–3 after treatment."},
-  "Chemical Peel":{dos:["Use only gentle, fragrance-free cleanser and moisturiser","Apply SPF 50+ religiously","Let peeling skin shed naturally — do not force it"],donts:["No sun exposure for 2 weeks minimum","No picking, peeling, or rubbing — risk of scarring","No exfoliants or retinol for 1 week","No swimming for 1 week","No makeup until initial peeling is complete"],tip:"Peeling typically begins day 3–5 and lasts until day 7–10. Results continue improving for up to 4 weeks."},
-  "Microneedling":{dos:["Apply prescribed hyaluronic acid or healing serum","Use gentle mineral sunscreen","Keep skin clean and hydrated"],donts:["No makeup for 24 hours","No active ingredients (vitamin C, AHA, retinol) for 72 hours","No unnecessary touching for 24 hours","No exercise or sweating for 24 hours","No direct sun for 2 weeks"],tip:"Redness and mild swelling for 24–48 hours is expected. Collagen remodelling continues for weeks — be patient."},
-  "RF Lifting":{dos:["Stay well hydrated before and after","Use SPF daily","Apply soothing moisturiser if redness occurs"],donts:["No hot baths, saunas, or steam rooms for 48 hours","No intense exercise for 24 hours","No other energy-based treatments for 4 weeks"],tip:"Collagen remodelling continues for 3–6 months. Best results appear 2–3 months after completing a series."},
-  "LED Therapy":{dos:["Apply moisturiser and SPF after treatment","Continue regular skincare routine","Hydrate well"],donts:["Avoid photosensitising medications without consulting your practitioner","No tanning beds for 48 hours"],tip:"LED therapy has zero downtime. Consistency across sessions is the key to long-term results."},
-  "Ultherapy":{dos:["Take OTC pain relief if discomfort persists","Apply ice wrapped in cloth to soothe swelling","Resume normal skincare after 24 hours"],donts:["No intense exercise for 24 hours","No extreme heat for 48 hours","No additional skin tightening treatments for 6 months"],tip:"Mild swelling or tenderness for 1–2 weeks is normal. Lifting results improve over 3–6 months."},
-  "Sculptra":{dos:["Massage treated areas: 5 min, 5 times a day, for 5 days (the 5-5-5 rule)","Apply ice to reduce swelling","Stay hydrated"],donts:["No dental work for 2 weeks","No extreme sun or heat for 2 weeks","No laser or RF treatments for 4 weeks"],tip:"The 5-5-5 massage rule is non-negotiable for Sculptra. Full effect at 3–4 months, lasting 2+ years."},
-  "PRP":{dos:["Keep area clean for 24 hours","Stay well hydrated","Use gentle cleanser and moisturiser"],donts:["No makeup for 6–12 hours","No anti-inflammatory medications for 1 week","No intense sun for 1 week","No alcohol for 24 hours"],tip:"PRP uses your own growth factors for natural, gradual results. Most clients need 3 sessions 4–6 weeks apart."},
-  "Other":{dos:["Follow your practitioner's specific aftercare instructions","Keep treated area clean and moisturised","Apply SPF if treatment involved the face"],donts:["Avoid touching treated area unnecessarily for 24 hours","No makeup immediately after facial treatments","No intense exercise for 24 hours"],tip:"Always ask your clinic for written aftercare specific to your treatment and skin type."},
-};
-
-const TREATMENT_TYPES = Object.keys(AFTERCARE).sort((a, b) => {   if (a === "Other") return 1;   if (b === "Other") return -1;   return a.localeCompare(b); });
+const TREATMENT_TYPES = [
+  "Botox","Chemical Peel","Filler","Hydrafacial","Laser Hair Removal","LED Therapy",
+  "Microneedling","PRP","RF Lifting","Sculptra","Ultherapy","Other",
+];
 const FREQUENCIES = [
   {label:"Every 2 weeks",days:14},{label:"Every 3 weeks",days:21},
   {label:"Monthly",days:30},{label:"Every 6 weeks",days:42},
@@ -310,7 +298,7 @@ const TERMS_SECTIONS = [
   {t:"1. Acceptance",b:"By creating an account, you agree to these Terms and our Privacy Policy. These terms are governed by the laws of Thailand. You must be at least 20 years of age (Thai age of majority) to use Become."},
   {t:"2. Service Description",b:"Become is a personal beauty treatment tracker for recording sessions, tracking packages, and receiving reminders. It is provided for personal, non-commercial use only."},
   {t:"3. User Content",b:"You own all content you upload. You grant Become a limited licence to store and display it solely to provide the service. You are responsible for the accuracy and legality of your content."},
-  {t:"4. Medical Disclaimer",b:"Become is a personal organiser and does NOT constitute medical advice. Aftercare guidance and reminders are for general informational purposes only. Always follow your treating practitioner's specific instructions. We accept no liability for harm arising from reliance on in-app information."},
+  {t:"4. Medical Disclaimer",b:"Become is a personal organiser and does NOT constitute medical advice. Reminders are for general informational purposes only. Always follow your treating practitioner's specific instructions. We accept no liability for harm arising from reliance on in-app information."},
   {t:"5. Acceptable Use",b:"You agree not to: use the app unlawfully; attempt unauthorised access; upload malicious code; scrape or redistribute content; use the app on behalf of another without their consent."},
   {t:"6. Intellectual Property",b:"All IP in Become — name, logo, design, software — belongs to Become or its licensors. You may not copy, modify, or distribute it without written permission."},
   {t:"7. Limitation of Liability",b:"To the maximum extent permitted by Thai law, Become is not liable for indirect or consequential damages including loss of data or missed reminders. Total liability shall not exceed amounts paid in the preceding 12 months."},
@@ -377,7 +365,6 @@ export default function Become(){
   const [view,setView]=useState("home");
   const [selectedId,setSelectedId]=useState(null);
   const [sessionIdx,setSessionIdx]=useState(null);
-  const [detailTab,setDetailTab]=useState("sessions");
   const [showAdd,setShowAdd]=useState(false);
   const [showLog,setShowLog]=useState(false);
   const [showEdit,setShowEdit]=useState(false);
@@ -412,7 +399,6 @@ export default function Become(){
 
   const sel=treatments.find(t=>String(t.id)===String(selectedId));
   const pal=sel?PALETTE[(sel.palette||0)%PALETTE.length]:PALETTE[0];
-  const ac=sel?(AFTERCARE[sel.name]||AFTERCARE["Other"]):null;
   const sortedSessions=sel?coerceSessions(sel.sessions).slice().sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
   const selCounts=sel?packSessionCounts(sel):{used:0,total:0,remaining:0};
@@ -751,7 +737,7 @@ async function logSession(){
       setIsSaving(false);
     }
   }
-  function goToDetail(id){setSelectedId(id);setDetailTab("sessions");setView("detail");}
+  function goToDetail(id){setSelectedId(id);setView("detail");}
   function buyMore(pack){
     const known=TREATMENT_TYPES.includes(pack.name);
     setForm({
@@ -830,7 +816,6 @@ async function saveEditSession(){
       setTreatments(prev=>prev.map(t=>String(t.id)!==String(sel.id)?t:updated));
       setSyncError("");
       setView("detail");
-      setDetailTab("sessions");
     }catch(e){
       showWriteError("Couldn't remove this session", e);
     }finally{
@@ -1025,9 +1010,6 @@ async function saveEditSession(){
     .nbtn.on{background:rgba(180,145,95,0.1);}
     .back{background:#F5EFE6;border:none;border-radius:50px;padding:8px 16px 8px 12px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:#7A6A58;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;}
     .back:hover{background:#EDE5D8;}
-    .tabs{display:flex;background:#F5EFE6;border-radius:14px;padding:4px;}
-    .t{flex:1;padding:10px;background:none;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s;color:#9A8A78;}
-    .t.on{background:#FFF;color:#1C1612;box-shadow:0 2px 8px rgba(28,22,18,0.08);}
     .soc{width:100%;padding:14px;border:1.5px solid #EDE5D8;border-radius:14px;background:#FFF;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;color:#1C1612;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:all 0.15s;}
     .soc:hover{border-color:rgba(180,145,95,0.3);transform:translateY(-1px);}
     .otp{width:52px;height:60px;border:1.5px solid #EDE5D8;border-radius:14px;background:#FFF;font-family:'DM Sans',sans-serif;font-size:24px;font-weight:600;color:#1C1612;text-align:center;outline:none;transition:border 0.2s;}
@@ -1843,12 +1825,7 @@ async function saveEditSession(){
               </div>
 
               <div style={{padding:"20px"}}>
-                <div className="tabs" style={{marginBottom:20}}>
-                  <button className={`t ${detailTab==="sessions"?"on":""}`} onClick={()=>setDetailTab("sessions")}>Session Timeline</button>
-                  <button className={`t ${detailTab==="aftercare"?"on":""}`} onClick={()=>setDetailTab("aftercare")}>Aftercare Guide</button>
-                </div>
-
-                {detailTab==="sessions"&&isJournal(sel)&&(
+                {isJournal(sel)&&(
                   <JournalVisitList
                     visits={sortedSessions.map((ss)=>({id:ss.id,dateText:fmtDate(ss.date),note:ss.note||""}))}
                     emptyLabel={t("no_visits_yet")}
@@ -1864,7 +1841,7 @@ async function saveEditSession(){
                   />
                 )}
 
-                {detailTab==="sessions"&&!isJournal(sel)&&(
+                {!isJournal(sel)&&(
                   <div>
                     {getNext(sel)&&selCounts.remaining>0&&(()=>{
                       const nextDays=daysUntil(getNext(sel));
@@ -1950,47 +1927,6 @@ async function saveEditSession(){
                   </div>
                 )}
 
-                {detailTab==="aftercare"&&ac&&(
-                  <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                    <div style={{background:pal.bg,borderRadius:20,padding:"20px",border:`1px solid ${pal.accent}15`}}>
-                      <p style={{fontSize:10,fontWeight:600,color:pal.text,letterSpacing:2,textTransform:"uppercase",marginBottom:10}}>Good to know</p>
-                      <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:300,lineHeight:1.7,fontStyle:"italic"}}>"{ac.tip}"</p>
-                    </div>
-                    <div className="card" style={{padding:"20px"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-                        <div style={{width:28,height:28,borderRadius:"50%",background:"#EAF5EE",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                          <span style={{fontSize:12,color:"#4A9A6A",fontWeight:700}}>✓</span>
-                        </div>
-                        <p style={{fontSize:14,fontWeight:600,color:"#4A9A6A"}}>Do these after treatment</p>
-                      </div>
-                      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                        {ac.dos.map((d,i)=>(
-                          <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
-                            <div style={{width:5,height:5,borderRadius:"50%",background:"#4A9A6A",flexShrink:0,marginTop:7}}/>
-                            <p style={{fontSize:13,color:"#4A3C30",lineHeight:1.65}}>{d}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="card" style={{padding:"20px"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-                        <div style={{width:28,height:28,borderRadius:"50%",background:"#FAEAEA",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                          <span style={{fontSize:12,color:"#C05858",fontWeight:700}}>✕</span>
-                        </div>
-                        <p style={{fontSize:14,fontWeight:600,color:"#C05858"}}>Avoid these after treatment</p>
-                      </div>
-                      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                        {ac.donts.map((d,i)=>(
-                          <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
-                            <div style={{width:5,height:5,borderRadius:"50%",background:"#C05858",flexShrink:0,marginTop:7}}/>
-                            <p style={{fontSize:13,color:"#4A3C30",lineHeight:1.65}}>{d}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 <div style={{textAlign:"center",marginTop:36}}>
                   <button onClick={()=>deleteTreatment(sel.id)} disabled={isSaving} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:isSaving?"not-allowed":"pointer",fontWeight:500}}>
                     {isSaving?"Removing…":"Remove this treatment"}
@@ -2005,7 +1941,7 @@ async function saveEditSession(){
             <div style={{paddingBottom:60}}>
               <div style={{background:`linear-gradient(160deg,${pal.bg},#FAF7F2)`,padding:"52px 24px 28px",borderRadius:"0 0 32px 32px",borderBottom:"1px solid rgba(180,145,95,0.1)"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
-                  <button className="back" onClick={()=>{setView("detail");setDetailTab("sessions");}}>← Back</button>
+                  <button className="back" onClick={()=>setView("detail")}>← Back</button>
                   <button onClick={()=>openEditSession(selSession)}
                     style={{background:"#F5EFE6",border:"1px solid rgba(180,145,95,0.2)",borderRadius:50,padding:"8px 18px",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,color:"#B4915F",cursor:"pointer",display:"flex",alignItems:"center",gap:6,transition:"all 0.15s"}}
                     onMouseEnter={e=>e.currentTarget.style.background="#EDE5D8"}
@@ -2058,16 +1994,7 @@ async function saveEditSession(){
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:300,color:"#4A3C30",lineHeight:1.7,fontStyle:"italic"}}>"{selSession.note}"</p>
                   </div>
                 )}
-                <div style={{textAlign:"center",marginTop:8,marginBottom:8}}>                   <button onClick={removeSession} disabled={isSaving} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:isSaving?"not-allowed":"pointer",fontWeight:500}}>                     {isSaving?"Removing…":"Remove this session"}                   </button>                 </div>                 {ac&&(
-                  <div style={{background:pal.bg,borderRadius:20,padding:"18px 20px",border:`1px solid ${pal.accent}15`}}>
-                    <p style={{fontSize:10,fontWeight:600,color:pal.text,letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Aftercare reminder</p>
-                    <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:300,lineHeight:1.65,fontStyle:"italic",marginBottom:14}}>"{ac.tip}"</p>
-                    <button onClick={()=>{setView("detail");setDetailTab("aftercare");}}
-                      style={{background:pal.accent,border:"none",borderRadius:50,padding:"10px 22px",color:"#FFF",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",boxShadow:`0 4px 14px ${pal.accent}25`}}>
-                      View Full Aftercare Guide →
-                    </button>
-                  </div>
-          )}
+                <div style={{textAlign:"center",marginTop:8,marginBottom:8}}>                   <button onClick={removeSession} disabled={isSaving} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:isSaving?"not-allowed":"pointer",fontWeight:500}}>                     {isSaving?"Removing…":"Remove this session"}                   </button>                 </div>
           <div style={{textAlign:"center",marginTop:24}}>
             <button onClick={removeSession} disabled={isSaving} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:isSaving?"not-allowed":"pointer",fontWeight:500}}>{isSaving?"Removing…":"Remove this session"}</button>
           </div>
