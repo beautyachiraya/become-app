@@ -47,8 +47,9 @@ function isIOSDevice(source) {
 }
 
 /**
- * Home-screen Safari reports `navigator.standalone`. Firebase cannot finish a
- * popup there (it opens a link and loses the window), so that case still redirects.
+ * Home-screen Safari reports `navigator.standalone`. Desktop in-app and desktop
+ * home-screen apps still use a full-page redirect. A phone does not: that
+ * return is what shows "didn't finish".
  */
 function isStandaloneApp(source) {
   if (source.standalone === true) return true;
@@ -62,22 +63,42 @@ function isStandaloneApp(source) {
 }
 
 /**
- * Full-page redirect only where a popup cannot report back.
+ * Full-page redirect only where a popup cannot report back and the return can
+ * still be read.
  *
- * iPhone Safari and Chrome used to redirect. Google does finish, but the
- * credential is left in sessionStorage on become-app-dde78.firebaseapp.com.
- * The Vercel page can only read that through a third-party frame, which iOS
- * partitions, so getRedirectResult comes back empty and the login screen says
- * sign-in didn't finish. A popup hands the credential to this page directly.
+ * iPhone and Android used to redirect, including from the home-screen icon and
+ * from in-app browsers. Google does finish, but the credential is left in
+ * sessionStorage on become-app-dde78.firebaseapp.com. The Vercel page can only
+ * read that through a third-party frame, which the phone partitions, so
+ * getRedirectResult comes back empty and the login screen says sign-in didn't
+ * finish. A popup that starts on this site can hand the credential back.
  * authDomain stays on the Firebase host: the Vercel /__/auth/handler address
  * is not an authorized Google redirect URI.
  */
 export function prefersGoogleRedirect(env) {
   const source = env || {};
   const userAgent = source.userAgent || "";
+  if (isIOSDevice(source) || /Android/i.test(userAgent)) return false;
   if (isInAppBrowser(userAgent)) return true;
   if (isStandaloneApp(source)) return true;
   return false;
+}
+
+/** Hash the start page reads when it is opened without a window handle. */
+export function handlerUrlFromStartHash(hash) {
+  if (!hash || typeof hash !== "string") return "";
+  const raw = hash.charAt(0) === "#" ? hash.slice(1) : hash;
+  if (!raw) return "";
+  try {
+    return isFirebaseAuthHandlerUrl(decodeURIComponent(raw)) ? decodeURIComponent(raw) : "";
+  } catch (err) {
+    return isFirebaseAuthHandlerUrl(raw) ? raw : "";
+  }
+}
+
+export function startPageHashUrl(origin, handlerUrl) {
+  if (!origin || !isFirebaseAuthHandlerUrl(handlerUrl)) return "";
+  return origin + GOOGLE_AUTH_START_PATH + "#" + encodeURIComponent(handlerUrl);
 }
 
 /** Same-origin page the phone popup loads first, then leaves for the Firebase handler. */
@@ -146,12 +167,101 @@ function noopPopupRelease() {}
 noopPopupRelease.popup = function() { return null; };
 
 /**
+ * Home-screen Safari tells Firebase `navigator.standalone`, and Firebase then
+ * opens Google by clicking a link instead of `window.open`. That link starts
+ * on the Firebase host, so iPhone drops `window.opener` and the account never
+ * gets back to Become. Hide the flag so Firebase calls `window.open`, which
+ * this page already wrapped.
+ */
+function hideStandaloneFlag(win) {
+  const nav = win && win.navigator;
+  if (!nav || nav.standalone !== true) return function() {};
+  let restore = function() {};
+  try {
+    const own = Object.getOwnPropertyDescriptor(nav, "standalone");
+    Object.defineProperty(nav, "standalone", {
+      configurable: true,
+      get: function() { return false; },
+    });
+    restore = function() {
+      try {
+        if (own) Object.defineProperty(nav, "standalone", own);
+        else delete nav.standalone;
+      } catch (err) { /* The sign-in page can keep going. */ }
+    };
+  } catch (err) {
+    return function() {};
+  }
+  return restore;
+}
+
+function publishHandlerUrl(popup, origin, handler) {
+  if (!popup || !handler || !origin) return false;
+  let handed = false;
+  try {
+    if (popup.sessionStorage) popup.sessionStorage.setItem(GOOGLE_POPUP_URL_KEY, handler);
+    handed = true;
+  } catch (err) { /* The start page can still take a message. */ }
+  try {
+    popup.postMessage({ type: GOOGLE_POPUP_NAV_MESSAGE, url: handler }, origin);
+    handed = true;
+  } catch (err) { /* Fall through if the window will not take a message. */ }
+  try {
+    if (popup.localStorage) popup.localStorage.setItem(GOOGLE_POPUP_URL_KEY, handler);
+  } catch (err) { /* Same-origin storage is only a backup. */ }
+  return handed;
+}
+
+/**
+ * Firebase on a home-screen app creates an `<a>` and clicks it. Point that
+ * click at the already-open start page, or open the start page with the
+ * handler address in the hash when there is no window handle.
+ */
+function watchFirebaseAnchor(win, origin, getPopup, markUsed) {
+  const doc = win && win.document;
+  if (!doc || typeof doc.createElement !== "function") return function() {};
+  const original = doc.createElement.bind(doc);
+  doc.createElement = function(tagName) {
+    const el = original(tagName);
+    if (!el || String(tagName).toLowerCase() !== "a" || typeof el.dispatchEvent !== "function") return el;
+    const origDispatch = el.dispatchEvent.bind(el);
+    el.dispatchEvent = function(event) {
+      let href = "";
+      try { href = el.href || ""; } catch (err) { href = ""; }
+      if (!event || event.type !== "click" || !isFirebaseAuthHandlerUrl(href)) {
+        return origDispatch(event);
+      }
+      const popup = getPopup();
+      if (popup && publishHandlerUrl(popup, origin, href)) {
+        markUsed();
+        try { if (el.target && el.target !== "_blank") popup.name = el.target; } catch (err) { /* name is optional */ }
+        try { popup.focus(); } catch (err) { /* The window is already open. */ }
+        return true;
+      }
+      const hashed = startPageHashUrl(origin, href);
+      if (hashed) {
+        try { el.href = hashed; } catch (err) { /* Keep Firebase's address. */ }
+      }
+      markUsed();
+      return origDispatch(event);
+    };
+    return el;
+  };
+  return function restoreCreate() {
+    doc.createElement = original;
+  };
+}
+
+/**
  * Open a same-origin window during the tap. When Firebase later asks for a
  * popup, hand it the handler address and let that window navigate itself.
  *
  * Setting location from here on an about:blank window drops window.opener on
  * iPhone. The Google handler then cannot see this page, stores the credential
  * where Become cannot read it, and the login screen comes back signed out.
+ * The home-screen app used to leave for Google in this same window. That
+ * return is the red "didn't finish" line, because the phone cannot read the
+ * credential back.
  *
  * Desktop does not need that head start, but it still wraps `window.open` so
  * we can see the popup Firebase opens. Google’s account page logs a
@@ -173,29 +283,28 @@ export function beginGooglePopupGesture(win, prime) {
     } catch (err) {
       opened = null;
     }
-    if (!opened) return noopPopupRelease;
+    if (!opened && origin && win.document && typeof win.document.createElement === "function") {
+      try {
+        const starter = win.document.createElement("a");
+        starter.href = startUrl;
+        starter.target = "become-google-auth";
+        if (typeof starter.click === "function") starter.click();
+      } catch (err) { /* Firebase's own open is still wrapped below. */ }
+    }
   }
   const original = win.open;
   let settled = false;
+  const restoreStandalone = prime ? hideStandaloneFlag(win) : function() {};
+  const restoreCreate = prime ? watchFirebaseAnchor(win, origin, function() { return opened; }, function() { settled = true; }) : function() {};
   function restore() {
     if (win.open === wrapped) win.open = original;
   }
   function wrapped(url, target, windowFeatures) {
     restore();
     settled = true;
+    const handler = isFirebaseAuthHandlerUrl(url) ? url : "";
     if (prime && opened) {
-      const handler = isFirebaseAuthHandlerUrl(url) ? url : "";
-      let handedOff = false;
-      if (handler && origin) {
-        try {
-          if (opened.sessionStorage) opened.sessionStorage.setItem(GOOGLE_POPUP_URL_KEY, handler);
-          handedOff = true;
-        } catch (err) { /* The start page can still take a message. */ }
-        try {
-          opened.postMessage({ type: GOOGLE_POPUP_NAV_MESSAGE, url: handler }, origin);
-          handedOff = true;
-        } catch (err) { /* Fall through if the window will not take a message. */ }
-      }
+      const handedOff = handler ? publishHandlerUrl(opened, origin, handler) : false;
       if (!handedOff) {
         try {
           if (url) opened.location.href = url;
@@ -212,6 +321,15 @@ export function beginGooglePopupGesture(win, prime) {
       try { opened.focus(); } catch (err) { /* The window is already open. */ }
       return opened;
     }
+    if (prime && handler && origin) {
+      const hashed = startPageHashUrl(origin, handler);
+      try {
+        opened = original.call(win, hashed || url, target, windowFeatures);
+      } catch (err) {
+        opened = null;
+      }
+      return opened;
+    }
     try {
       opened = original.call(win, url, target, windowFeatures);
     } catch (err) {
@@ -222,6 +340,8 @@ export function beginGooglePopupGesture(win, prime) {
   win.open = wrapped;
   function release() {
     restore();
+    restoreCreate();
+    restoreStandalone();
     if (prime && opened && !settled) {
       try { opened.close(); } catch (err) { /* already closed */ }
     }

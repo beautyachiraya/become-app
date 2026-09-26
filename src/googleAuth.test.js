@@ -12,6 +12,8 @@ import {
   GOOGLE_POPUP_NAV_MESSAGE,
   isFirebaseAuthHandlerUrl,
   handlerUrlFromPopupMessage,
+  handlerUrlFromStartHash,
+  startPageHashUrl,
   takeStoredHandlerUrl,
   beginGooglePopupGesture,
   readPopupClosed,
@@ -92,18 +94,37 @@ describe("prefersGoogleRedirect", () => {
     })).toBe(false);
   });
 
-  it("still redirects from in-app browsers and an installed home-screen app", () => {
+  it("does not redirect a phone, including the home screen and in-app browsers", () => {
+    // That redirect comes back with no account and shows "didn't finish".
     expect(prefersGoogleRedirect({
       userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 320.0.0.0.0",
-    })).toBe(true);
+    })).toBe(false);
     expect(prefersGoogleRedirect({
       userAgent: IPHONE_SAFARI,
       standalone: true,
+    })).toBe(false);
+    expect(prefersGoogleRedirect({
+      userAgent: ANDROID_CHROME + " Line/14.0.0",
+      standalone: true,
+    })).toBe(false);
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI, standalone: true })).toBe(true);
+    expect(shouldPrimeGooglePopup({
+      userAgent: IPHONE_SAFARI + " Line/14.0.0",
     })).toBe(true);
     expect(prefersGoogleRedirect({
       userAgent: IPHONE_SAFARI,
       standalone: false,
     })).toBe(false);
+  });
+
+  it("still redirects a desktop in-app browser and a desktop home-screen app", () => {
+    expect(prefersGoogleRedirect({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Instagram 320.0",
+    })).toBe(true);
+    expect(prefersGoogleRedirect({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      standalone: true,
+    })).toBe(true);
   });
 });
 
@@ -116,7 +137,7 @@ describe("shouldPrimeGooglePopup", () => {
       platform: "MacIntel",
       maxTouchPoints: 0,
     })).toBe(false);
-    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI, standalone: true })).toBe(false);
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI, standalone: true })).toBe(true);
   });
 });
 
@@ -172,6 +193,17 @@ describe("isFirebaseAuthHandlerUrl", () => {
     expect(takeStoredHandlerUrl(storage)).toBe("");
   });
 
+  it("reads the handler from the start-page hash and ignores anything else", () => {
+    const origin = "https://become-app-rho.vercel.app";
+    expect(handlerUrlFromStartHash("#" + encodeURIComponent(handler))).toBe(handler);
+    expect(startPageHashUrl(origin, handler)).toBe(
+      origin + GOOGLE_AUTH_START_PATH + "#" + encodeURIComponent(handler)
+    );
+    expect(handlerUrlFromStartHash("#" + encodeURIComponent("https://evil.example/"))).toBe("");
+    expect(startPageHashUrl(origin, "https://evil.example/")).toBe("");
+    expect(handlerUrlFromStartHash("")).toBe("");
+  });
+
   it("keeps the phone start page on the same handler check", () => {
     const fs = require("fs");
     const path = require("path");
@@ -180,6 +212,9 @@ describe("isFirebaseAuthHandlerUrl", () => {
     expect(html).toContain(GOOGLE_POPUP_NAV_MESSAGE);
     expect(html).toContain("https://" + FIREBASE_AUTH_DOMAIN);
     expect(html).toContain('"/__/auth/handler"');
+    expect(html).toContain("location.hash");
+    expect(html).toContain("localStorage.getItem");
+    expect(html).toContain("decodeURIComponent");
   });
 });
 
@@ -265,6 +300,76 @@ describe("beginGooglePopupGesture", () => {
     release();
     expect(popup.close).not.toHaveBeenCalled();
     expect(win.open).toBe(nativeOpen);
+  });
+
+  it("hands the home-screen link to the start page instead of leaving this window", () => {
+    const popup = popupWindow();
+    const nav = { standalone: true };
+    const clicks = [];
+    const win = {
+      location: { origin: "https://become-app-rho.vercel.app" },
+      navigator: nav,
+      open: jest.fn(() => popup),
+      document: {
+        createElement() {
+          const el = {
+            href: "",
+            target: "",
+            dispatchEvent(event) {
+              clicks.push({ type: event && event.type, href: el.href });
+              return true;
+            },
+          };
+          return el;
+        },
+      },
+    };
+    const release = beginGooglePopupGesture(win, true);
+    expect(nav.standalone).toBe(false);
+    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+    expect(win.open(handler, "firebase-popup", "width=500")).toBe(popup);
+    expect(popup.location.href).toBe("about:blank");
+    expect(popup.data[GOOGLE_POPUP_URL_KEY]).toBe(handler);
+    const anchor = win.document.createElement("a");
+    anchor.href = handler;
+    anchor.target = "firebase-popup";
+    expect(anchor.dispatchEvent({ type: "click" })).toBe(true);
+    expect(clicks).toEqual([]);
+    release();
+    expect(popup.close).not.toHaveBeenCalled();
+    expect(nav.standalone).toBe(true);
+  });
+
+  it("opens the start page with the handler in the hash when the tap cannot keep a window", () => {
+    const opened = [];
+    const win = {
+      location: { origin: "https://become-app-rho.vercel.app" },
+      navigator: { standalone: true },
+      open: jest.fn((url) => {
+        opened.push(url);
+        return null;
+      }),
+      document: {
+        createElement() {
+          return {
+            href: "",
+            target: "",
+            click() { opened.push(this.href); },
+            dispatchEvent() { return true; },
+          };
+        },
+      },
+    };
+    const release = beginGooglePopupGesture(win, true);
+    expect(opened[0]).toBe("https://become-app-rho.vercel.app" + GOOGLE_AUTH_START_PATH);
+    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+    win.open(handler, "firebase-popup");
+    expect(opened[opened.length - 1]).toBe(startPageHashUrl("https://become-app-rho.vercel.app", handler));
+    const anchor = win.document.createElement("a");
+    anchor.href = handler;
+    anchor.dispatchEvent({ type: "click" });
+    expect(anchor.href).toBe(startPageHashUrl("https://become-app-rho.vercel.app", handler));
+    release();
   });
 });
 
