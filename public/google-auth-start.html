@@ -38,8 +38,20 @@
       function readStored() {
         try { return sessionStorage.getItem(KEY) || ""; } catch (err) { return ""; }
       }
+      function readLocal() {
+        try { return localStorage.getItem(KEY) || ""; } catch (err) { return ""; }
+      }
+      function readHash() {
+        try {
+          var hash = location.hash || "";
+          if (hash.charAt(0) === "#") hash = hash.slice(1);
+          if (!hash) return "";
+          return decodeURIComponent(hash);
+        } catch (err) { return ""; }
+      }
       function clearStored() {
         try { sessionStorage.removeItem(KEY); } catch (err) {}
+        try { localStorage.removeItem(KEY); } catch (err) {}
       }
       function go(url) {
         if (!allowed(url)) return false;
@@ -47,15 +59,16 @@
         location.replace(url);
         return true;
       }
-      if (go(readStored())) return;
+      // This page navigates itself. The login page must not point the popup at Firebase.
+      if (go(readHash()) || go(readStored()) || go(readLocal())) return;
       window.addEventListener("message", function (event) {
         if (event.origin !== location.origin) return;
         var data = event.data || {};
         if (data.type !== TYPE) return;
-        go(data.url || readStored());
+        go(data.url || readStored() || readLocal() || readHash());
       });
       var timer = setInterval(function () {
-        if (go(readStored())) clearInterval(timer);
+        if (go(readHash()) || go(readStored()) || go(readLocal())) clearInterval(timer);
       }, 50);
       setTimeout(function () { clearInterval(timer); }, 20000);
     })();

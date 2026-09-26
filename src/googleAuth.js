@@ -87,6 +87,23 @@ export const GOOGLE_POPUP_URL_KEY = "become.googleHandlerUrl";
 
 export const GOOGLE_POPUP_NAV_MESSAGE = "become-google-nav";
 
+/** Hash the start page reads, then uses to leave for Google on its own. */
+export function handlerUrlFromStartHash(hash) {
+  if (!hash || typeof hash !== "string") return "";
+  const raw = hash.charAt(0) === "#" ? hash.slice(1) : hash;
+  if (!raw) return "";
+  try {
+    return isFirebaseAuthHandlerUrl(decodeURIComponent(raw)) ? decodeURIComponent(raw) : "";
+  } catch (err) {
+    return isFirebaseAuthHandlerUrl(raw) ? raw : "";
+  }
+}
+
+export function startPageHashUrl(origin, handlerUrl) {
+  if (!origin || !isFirebaseAuthHandlerUrl(handlerUrl)) return "";
+  return origin + GOOGLE_AUTH_START_PATH + "#" + encodeURIComponent(handlerUrl);
+}
+
 /** iOS and Android drop window.open once the click handler has awaited. Open first. */
 export function shouldPrimeGooglePopup(env) {
   const source = env || {};
@@ -146,12 +163,57 @@ function noopPopupRelease() {}
 noopPopupRelease.popup = function() { return null; };
 
 /**
+ * Ask the already-open phone window to load the start page with the handler
+ * address in the hash. That page then leaves for Google on its own.
+ *
+ * iPhone Safari drops window.opener when the login page assigns the Firebase
+ * handler onto the popup. The handler then cannot see this page, saves the
+ * account where Become cannot read it, and the login screen says sign-in
+ * didn't finish. A same-origin hash change keeps the opener attached.
+ */
+function navigatePopupToStartHash(popup, origin, handler) {
+  const hashed = startPageHashUrl(origin, handler);
+  if (!popup || !hashed) return false;
+  try {
+    if (popup.location && typeof popup.location.replace === "function") {
+      popup.location.replace(hashed);
+      return true;
+    }
+  } catch (err) { /* A same-origin href assignment keeps the opener too. */ }
+  try {
+    popup.location.href = hashed;
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+/** Backup when the popup will not take a same-origin hash change. */
+function publishHandlerUrl(popup, origin, handler) {
+  if (!popup || !handler || !origin) return false;
+  let handed = false;
+  try {
+    if (popup.sessionStorage) popup.sessionStorage.setItem(GOOGLE_POPUP_URL_KEY, handler);
+    handed = true;
+  } catch (err) { /* The start page can still take a message. */ }
+  try {
+    popup.postMessage({ type: GOOGLE_POPUP_NAV_MESSAGE, url: handler }, origin);
+    handed = true;
+  } catch (err) { /* Storage may already have the address. */ }
+  try {
+    if (popup.localStorage) popup.localStorage.setItem(GOOGLE_POPUP_URL_KEY, handler);
+  } catch (err) { /* Same-origin storage is only a backup. */ }
+  return handed;
+}
+
+/**
  * Open a same-origin window during the tap. When Firebase later asks for a
  * popup, hand it the handler address and let that window navigate itself.
  *
- * Setting location from here on an about:blank window drops window.opener on
- * iPhone. The Google handler then cannot see this page, stores the credential
- * where Become cannot read it, and the login screen comes back signed out.
+ * The parent must not assign the Firebase handler (location.href or replace).
+ * Safari drops window.opener when the login page points the popup at
+ * become-app-dde78.firebaseapp.com/__/auth/handler. The start page reads the
+ * hash, a message, or storage, and opens the handler itself.
  *
  * Desktop does not need that head start, but it still wraps `window.open` so
  * we can see the popup Firebase opens. Google’s account page logs a
@@ -183,30 +245,11 @@ export function beginGooglePopupGesture(win, prime) {
   function wrapped(url, target, windowFeatures) {
     restore();
     settled = true;
-    if (prime && opened) {
-      const handler = isFirebaseAuthHandlerUrl(url) ? url : "";
-      let handedOff = false;
-      if (handler && origin) {
-        try {
-          if (opened.sessionStorage) opened.sessionStorage.setItem(GOOGLE_POPUP_URL_KEY, handler);
-          handedOff = true;
-        } catch (err) { /* The start page can still take a message. */ }
-        try {
-          opened.postMessage({ type: GOOGLE_POPUP_NAV_MESSAGE, url: handler }, origin);
-          handedOff = true;
-        } catch (err) { /* Fall through if the window will not take a message. */ }
-      }
-      if (!handedOff) {
-        try {
-          if (url) opened.location.href = url;
-        } catch (err) {
-          try {
-            opened = original.call(win, url, target, windowFeatures);
-          } catch (err2) {
-            opened = null;
-          }
-          return opened;
-        }
+    const handler = isFirebaseAuthHandlerUrl(url) ? url : "";
+    if (prime && opened && handler) {
+      // Never assign the handler from the parent. That is the Safari opener bug.
+      if (!navigatePopupToStartHash(opened, origin, handler)) {
+        publishHandlerUrl(opened, origin, handler);
       }
       try { if (target && target !== "_blank") opened.name = target; } catch (err) { /* name is optional */ }
       try { opened.focus(); } catch (err) { /* The window is already open. */ }
@@ -357,6 +400,15 @@ export function hadPendingGoogleRedirect(storage, apiKey, appName) {
   }
 }
 
+/** Drop a leftover redirect flag so a phone popup reload is not treated as a failed return. */
+export function clearPendingGoogleRedirect(storage, apiKey, appName) {
+  try {
+    if (storage && apiKey) storage.removeItem(firebasePendingRedirectKey(apiKey, appName));
+  } catch (err) {
+    // The popup can still hand the account back if storage is blocked.
+  }
+}
+
 export function readPageNavigationType(performanceObj) {
   try {
     const perf = performanceObj || (typeof performance !== "undefined" ? performance : null);
@@ -375,6 +427,9 @@ export function readPageNavigationType(performanceObj) {
  */
 export function isAbandonedGoogleRedirect(context) {
   if (!context) return false;
+  // Phones use a popup. An empty getRedirectResult there is a failed handoff
+  // or a leftover flag, not a redirect that should show "didn't finish".
+  if (context.popupReturn) return true;
   if (context.restoredFromCache) return true;
   if (context.navigationType === "back_forward") return true;
   if (context.hadPendingRedirect === false) return true;
@@ -506,6 +561,9 @@ export async function startGoogleSignIn({
       return { status: "error", error };
     }
   }
+  // A popup must not inherit a redirect flag. Otherwise a failed handoff
+  // reloads onto "didn't finish" even though this attempt never left that way.
+  clearGoogleRedirectIntent(storage);
   const raced = await finishPopupSignIn({
     signIn: () => signInWithPopup(popupAuth, provider),
     getPopup,

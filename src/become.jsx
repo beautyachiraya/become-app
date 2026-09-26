@@ -5,7 +5,7 @@ import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LAN
 import {
   prefersGoogleRedirect, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
   browserSessionStorage, peekGoogleRedirectIntent, takeGoogleRedirectIntent, clearGoogleRedirectIntent,
-  hadPendingGoogleRedirect, readPageNavigationType, startGoogleSignIn, loadGoogleRedirectResult,
+  hadPendingGoogleRedirect, clearPendingGoogleRedirect, readPageNavigationType, startGoogleSignIn, loadGoogleRedirectResult,
   adoptRedirectUser, googleRedirectOutcome, profileFromGoogleUser, GOOGLE_REDIRECT_INCOMPLETE,
 } from "./googleAuth";
 import { createDataClient, formatWriteError, formatProfilePhotoSaveError } from "./userData";
@@ -438,9 +438,12 @@ export default function Become(){
     let active=true;
     const storage=browserSessionStorage();
     // Read before getRedirectResult, which clears Firebase's pending flag.
+    // Phones sign in with a popup. An empty redirect result on those devices
+    // is a failed handoff or a leftover flag, not a reason to say sign-in didn't finish.
     const redirectContext={
       hadPendingRedirect:hadPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]"),
       navigationType:readPageNavigationType(),
+      popupReturn:shouldPrimeGooglePopup(readGoogleRedirectEnv()),
     };
     function showGoogleRedirectError(intent, error){
       const msg=mapAuthError(error,"google");
@@ -597,6 +600,13 @@ export default function Become(){
     setAuthBusy("google");
     const env=readGoogleRedirectEnv();
     const useRedirect=prefersGoogleRedirect(env);
+    const storage=browserSessionStorage();
+    if(!useRedirect){
+      // Safari's popup return used to land on the red "didn't finish" line
+      // when an older redirect flag was still stored.
+      clearGoogleRedirectIntent(storage);
+      clearPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]");
+    }
     // Must run before the first await. iOS only allows window.open inside the tap.
     // Desktop also wraps window.open so a closed Google window can end Connecting
     // even when Cross-Origin-Opener-Policy hides window.closed from Firebase.
@@ -610,7 +620,7 @@ export default function Become(){
         fromSignup,
         useRedirect,
         allowRedirectFallback:redirectFallbackAllowed(env),
-        storage:browserSessionStorage(),
+        storage,
         signInWithPopup,
         signInWithRedirect,
         getPopup:function(){return releasePopup.popup();},
