@@ -1,4 +1,4 @@
-/** Google sign-in helpers. Desktop and mobile Safari/Chrome use a popup. In-app browsers redirect. */
+/** Google sign-in helpers. Desktop and phone browsers use a popup. In-app browsers redirect. */
 
 export const FIREBASE_AUTH_DOMAIN = "become-app-dde78.firebaseapp.com";
 
@@ -80,6 +80,13 @@ export function prefersGoogleRedirect(env) {
   return false;
 }
 
+/** Same-origin page the phone popup loads first, then leaves for the Firebase handler. */
+export const GOOGLE_AUTH_START_PATH = "/google-auth-start.html";
+
+export const GOOGLE_POPUP_URL_KEY = "become.googleHandlerUrl";
+
+export const GOOGLE_POPUP_NAV_MESSAGE = "become-google-nav";
+
 /** iOS and Android drop window.open once the click handler has awaited. Open first. */
 export function shouldPrimeGooglePopup(env) {
   const source = env || {};
@@ -100,20 +107,75 @@ export function redirectFallbackAllowed(env) {
   return true;
 }
 
+/** Only the Firebase auth handler may be opened from the phone popup. */
+export function isFirebaseAuthHandlerUrl(url) {
+  if (typeof url !== "string" || !url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === "https://" + FIREBASE_AUTH_DOMAIN
+      && parsed.pathname === "/__/auth/handler";
+  } catch (err) {
+    return false;
+  }
+}
+
 /**
- * Open the Google window during the tap, then let Firebase navigate it.
- * Returns a function that closes the window if Firebase never used it.
+ * The start page asks for this before it leaves for Google.
+ * A message from another site, or any URL that is not the Firebase handler, is ignored.
+ */
+export function handlerUrlFromPopupMessage(event, expectedOrigin) {
+  if (!event || event.origin !== expectedOrigin) return "";
+  const data = event.data || {};
+  if (data.type !== GOOGLE_POPUP_NAV_MESSAGE) return "";
+  return isFirebaseAuthHandlerUrl(data.url) ? data.url : "";
+}
+
+export function takeStoredHandlerUrl(storage) {
+  try {
+    if (!storage) return "";
+    const url = storage.getItem(GOOGLE_POPUP_URL_KEY);
+    if (!isFirebaseAuthHandlerUrl(url)) return "";
+    storage.removeItem(GOOGLE_POPUP_URL_KEY);
+    return url;
+  } catch (err) {
+    return "";
+  }
+}
+
+function noopPopupRelease() {}
+noopPopupRelease.popup = function() { return null; };
+
+/**
+ * Open a same-origin window during the tap. When Firebase later asks for a
+ * popup, hand it the handler address and let that window navigate itself.
+ *
+ * Setting location from here on an about:blank window drops window.opener on
+ * iPhone. The Google handler then cannot see this page, stores the credential
+ * where Become cannot read it, and the login screen comes back signed out.
+ *
+ * Desktop does not need that head start, but it still wraps `window.open` so
+ * we can see the popup Firebase opens. Google’s account page logs a
+ * Cross-Origin-Opener-Policy error when anything reads `window.closed`. If
+ * that read throws, Firebase’s own close check stops and the button stays on
+ * “Connecting…”. `release.popup()` is how the login screen watches the window
+ * without waiting on Firebase.
+ *
+ * The returned function closes a primed window only if Firebase never used it.
  */
 export function beginGooglePopupGesture(win, prime) {
-  if (!prime || !win || typeof win.open !== "function") return function() {};
+  if (!win || typeof win.open !== "function") return noopPopupRelease;
+  const origin = win.location && win.location.origin ? win.location.origin : "";
+  const startUrl = origin ? origin + GOOGLE_AUTH_START_PATH : "about:blank";
   let opened = null;
-  try {
-    opened = win.open("about:blank", "_blank");
-  } catch (err) {
-    opened = null;
+  if (prime) {
+    try {
+      opened = win.open(startUrl, "become-google-auth");
+    } catch (err) {
+      opened = null;
+    }
+    if (!opened) return noopPopupRelease;
   }
-  if (!opened) return function() {};
-  const original = win.open.bind(win);
+  const original = win.open;
   let settled = false;
   function restore() {
     if (win.open === wrapped) win.open = original;
@@ -121,21 +183,161 @@ export function beginGooglePopupGesture(win, prime) {
   function wrapped(url, target, windowFeatures) {
     restore();
     settled = true;
-    try {
-      if (url) opened.location.href = url;
-    } catch (err) {
-      return original(url, target, windowFeatures);
+    if (prime && opened) {
+      const handler = isFirebaseAuthHandlerUrl(url) ? url : "";
+      let handedOff = false;
+      if (handler && origin) {
+        try {
+          if (opened.sessionStorage) opened.sessionStorage.setItem(GOOGLE_POPUP_URL_KEY, handler);
+          handedOff = true;
+        } catch (err) { /* The start page can still take a message. */ }
+        try {
+          opened.postMessage({ type: GOOGLE_POPUP_NAV_MESSAGE, url: handler }, origin);
+          handedOff = true;
+        } catch (err) { /* Fall through if the window will not take a message. */ }
+      }
+      if (!handedOff) {
+        try {
+          if (url) opened.location.href = url;
+        } catch (err) {
+          try {
+            opened = original.call(win, url, target, windowFeatures);
+          } catch (err2) {
+            opened = null;
+          }
+          return opened;
+        }
+      }
+      try { if (target && target !== "_blank") opened.name = target; } catch (err) { /* name is optional */ }
+      try { opened.focus(); } catch (err) { /* The window is already open. */ }
+      return opened;
     }
-    try { opened.focus(); } catch (err) { /* The window is already open. */ }
+    try {
+      opened = original.call(win, url, target, windowFeatures);
+    } catch (err) {
+      opened = null;
+    }
     return opened;
   }
   win.open = wrapped;
-  return function release() {
+  function release() {
     restore();
-    if (!settled) {
+    if (prime && opened && !settled) {
       try { opened.close(); } catch (err) { /* already closed */ }
     }
+  }
+  release.popup = function() { return opened; };
+  return release;
+}
+
+/**
+ * "closed" — the person dismissed Google.
+ * "open" — the account chooser is still up.
+ * "unavailable" — reading `closed` threw. Chrome reports that as
+ * Cross-Origin-Opener-Policy blocking `window.closed`. Firebase then never
+ * settles, so the login button would stay on “Connecting…”.
+ * A missing window counts as closed. Callers that have not opened one yet
+ * should skip this and keep waiting.
+ */
+export function readPopupClosed(popup) {
+  if (!popup) return "closed";
+  try {
+    return popup.closed ? "closed" : "open";
+  } catch (err) {
+    return "unavailable";
+  }
+}
+
+/**
+ * Resolves "closed" or "unavailable" once the popup is gone or unreadable.
+ * A null popup means Firebase has not opened it yet, so that is not a cancel.
+ * `stop()` drops the timer when sign-in finishes first.
+ */
+export function watchPopupDismissal(getPopup, options) {
+  const readClosed = (options && options.readClosed) || readPopupClosed;
+  const intervalMs = options && typeof options.intervalMs === "number" ? options.intervalMs : 200;
+  let timer = null;
+  let stopped = false;
+  const promise = new Promise((resolve) => {
+    function poll() {
+      if (stopped) return;
+      let popup = null;
+      try {
+        popup = typeof getPopup === "function" ? getPopup() : null;
+      } catch (err) {
+        popup = null;
+      }
+      if (popup) {
+        let state = "open";
+        try {
+          state = readClosed(popup);
+        } catch (err) {
+          state = "unavailable";
+        }
+        if (state === "closed" || state === "unavailable") {
+          resolve(state);
+          return;
+        }
+      }
+      timer = setTimeout(poll, intervalMs);
+    }
+    poll();
+  });
+  return {
+    promise,
+    stop() {
+      stopped = true;
+      if (timer != null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
   };
+}
+
+function quietPopupClose(error) {
+  const code = error && error.code;
+  return code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request";
+}
+
+/**
+ * Race Firebase’s popup against the window itself.
+ * Closing Google, or COOP hiding `window.closed`, returns "cancelled" without
+ * waiting for Firebase’s extra grace period. A user who still finishes in the
+ * popup is left for `onAuthStateChanged` — this does not cancel that request.
+ */
+export async function finishPopupSignIn({ signIn, getPopup, readClosed, intervalMs }) {
+  let settled = false;
+  const signInPromise = Promise.resolve().then(() => signIn()).then(
+    (result) => {
+      settled = true;
+      return { kind: "success", user: result && result.user };
+    },
+    (error) => {
+      settled = true;
+      return { kind: "error", error };
+    }
+  );
+  const watch = typeof getPopup === "function"
+    ? watchPopupDismissal(getPopup, { readClosed, intervalMs })
+    : null;
+  let winner;
+  try {
+    winner = watch
+      ? await Promise.race([
+        signInPromise,
+        watch.promise.then((state) => ({ kind: "dismissed", state })),
+      ])
+      : await signInPromise;
+  } finally {
+    if (watch) watch.stop();
+  }
+  if (winner.kind === "success") return { status: "success", user: winner.user };
+  if (winner.kind === "dismissed") {
+    if (!settled) signInPromise.then(() => {}, () => {});
+    return { status: "cancelled", reason: winner.state };
+  }
+  return { status: "rejected", error: winner.error };
 }
 
 /** Firebase writes this before leaving, as JSON `"true"`, and clears it on return. */
@@ -274,6 +476,9 @@ export function shouldFallbackToRedirect(error) {
  * Popup on desktop and on iPhone/Android browsers. Redirect only where a popup
  * cannot report back. A blocked popup on a phone must not fall through to
  * redirect: that return is what shows "didn't finish".
+ * Closing the popup, or COOP blocking `window.closed`, returns "cancelled"
+ * with no error text. Pass `getPopup` from `beginGooglePopupGesture` so a
+ * close is noticed even when Firebase’s own poll never settles.
  * `redirectAuth` uses the Firebase auth domain and may be the same instance as
  * `popupAuth`. Email and password stay on `popupAuth`.
  */
@@ -287,6 +492,9 @@ export async function startGoogleSignIn({
   storage,
   signInWithPopup,
   signInWithRedirect,
+  getPopup,
+  readClosed,
+  intervalMs,
 }) {
   if (useRedirect) {
     rememberGoogleRedirectIntent(storage, fromSignup);
@@ -298,21 +506,26 @@ export async function startGoogleSignIn({
       return { status: "error", error };
     }
   }
+  const raced = await finishPopupSignIn({
+    signIn: () => signInWithPopup(popupAuth, provider),
+    getPopup,
+    readClosed,
+    intervalMs,
+  });
+  if (raced.status === "success") return { status: "success", user: raced.user };
+  if (raced.status === "cancelled") return { status: "cancelled" };
+  const error = raced.error;
+  if (allowRedirectFallback === false || !shouldFallbackToRedirect(error)) {
+    if (quietPopupClose(error)) return { status: "cancelled" };
+    return { status: "error", error };
+  }
+  rememberGoogleRedirectIntent(storage, fromSignup);
   try {
-    const result = await signInWithPopup(popupAuth, provider);
-    return { status: "success", user: result && result.user };
-  } catch (error) {
-    if (allowRedirectFallback === false || !shouldFallbackToRedirect(error)) {
-      return { status: "error", error };
-    }
-    rememberGoogleRedirectIntent(storage, fromSignup);
-    try {
-      await signInWithRedirect(redirectAuth, provider);
-      return { status: "redirecting" };
-    } catch (redirectError) {
-      clearGoogleRedirectIntent(storage);
-      return { status: "error", error: redirectError };
-    }
+    await signInWithRedirect(redirectAuth, provider);
+    return { status: "redirecting" };
+  } catch (redirectError) {
+    clearGoogleRedirectIntent(storage);
+    return { status: "error", error: redirectError };
   }
 }
 

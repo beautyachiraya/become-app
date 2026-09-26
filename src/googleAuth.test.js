@@ -7,7 +7,16 @@ import {
   prefersGoogleRedirect,
   shouldPrimeGooglePopup,
   redirectFallbackAllowed,
+  GOOGLE_AUTH_START_PATH,
+  GOOGLE_POPUP_URL_KEY,
+  GOOGLE_POPUP_NAV_MESSAGE,
+  isFirebaseAuthHandlerUrl,
+  handlerUrlFromPopupMessage,
+  takeStoredHandlerUrl,
   beginGooglePopupGesture,
+  readPopupClosed,
+  watchPopupDismissal,
+  finishPopupSignIn,
   hadPendingGoogleRedirect,
   firebasePendingRedirectKey,
   readPageNavigationType,
@@ -128,26 +137,93 @@ describe("redirectFallbackAllowed", () => {
   });
 });
 
+describe("isFirebaseAuthHandlerUrl", () => {
+  const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+
+  it("accepts only the Firebase handler", () => {
+    expect(isFirebaseAuthHandlerUrl(handler)).toBe(true);
+    expect(isFirebaseAuthHandlerUrl("https://become-app-dde78.firebaseapp.com/__/auth/handler")).toBe(true);
+    expect(isFirebaseAuthHandlerUrl("https://become-app-dde78.firebaseapp.com/__/auth/handler.evil")).toBe(false);
+    expect(isFirebaseAuthHandlerUrl("https://become-app-rho.vercel.app/__/auth/handler")).toBe(false);
+    expect(isFirebaseAuthHandlerUrl("https://evil.example/__/auth/handler")).toBe(false);
+    expect(isFirebaseAuthHandlerUrl("")).toBe(false);
+  });
+
+  it("reads a handler address from the start page message or its storage", () => {
+    const origin = "https://become-app-rho.vercel.app";
+    expect(handlerUrlFromPopupMessage({
+      origin,
+      data: { type: GOOGLE_POPUP_NAV_MESSAGE, url: handler },
+    }, origin)).toBe(handler);
+    expect(handlerUrlFromPopupMessage({
+      origin: "https://evil.example",
+      data: { type: GOOGLE_POPUP_NAV_MESSAGE, url: handler },
+    }, origin)).toBe("");
+    expect(handlerUrlFromPopupMessage({
+      origin,
+      data: { type: GOOGLE_POPUP_NAV_MESSAGE, url: "https://evil.example/" },
+    }, origin)).toBe("");
+
+    const storage = memoryStorage();
+    storage.setItem(GOOGLE_POPUP_URL_KEY, handler);
+    expect(takeStoredHandlerUrl(storage)).toBe(handler);
+    expect(takeStoredHandlerUrl(storage)).toBe("");
+    storage.setItem(GOOGLE_POPUP_URL_KEY, "https://evil.example/");
+    expect(takeStoredHandlerUrl(storage)).toBe("");
+  });
+
+  it("keeps the phone start page on the same handler check", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const html = fs.readFileSync(path.join(__dirname, "../public/google-auth-start.html"), "utf8");
+    expect(html).toContain(GOOGLE_POPUP_URL_KEY);
+    expect(html).toContain(GOOGLE_POPUP_NAV_MESSAGE);
+    expect(html).toContain("https://" + FIREBASE_AUTH_DOMAIN);
+    expect(html).toContain('"/__/auth/handler"');
+  });
+});
+
 describe("beginGooglePopupGesture", () => {
   function popupWindow() {
+    const data = {};
     return {
       closed: false,
+      name: "",
       location: { href: "about:blank" },
+      sessionStorage: {
+        setItem(key, value) { data[key] = String(value); },
+        getItem(key) { return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null; },
+        removeItem(key) { delete data[key]; },
+      },
+      postMessage: jest.fn(),
       focus: jest.fn(),
       close: jest.fn(),
+      data,
     };
   }
 
-  it("navigates the window opened during the tap when Firebase opens one later", () => {
+  it("lets the phone window open the handler itself so the opener stays attached", () => {
     const popup = popupWindow();
     const nativeOpen = jest.fn(() => popup);
-    const win = { open: nativeOpen };
+    const win = {
+      location: { origin: "https://become-app-rho.vercel.app" },
+      open: nativeOpen,
+    };
     const release = beginGooglePopupGesture(win, true);
-    expect(nativeOpen).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(nativeOpen).toHaveBeenCalledWith(
+      "https://become-app-rho.vercel.app" + GOOGLE_AUTH_START_PATH,
+      "become-google-auth"
+    );
     const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
     const handed = win.open(handler, "event", "width=500");
     expect(handed).toBe(popup);
-    expect(popup.location.href).toBe(handler);
+    expect(popup.location.href).toBe("about:blank");
+    expect(popup.data[GOOGLE_POPUP_URL_KEY]).toBe(handler);
+    expect(popup.postMessage).toHaveBeenCalledWith(
+      { type: GOOGLE_POPUP_NAV_MESSAGE, url: handler },
+      "https://become-app-rho.vercel.app"
+    );
+    expect(takeStoredHandlerUrl(popup.sessionStorage)).toBe(handler);
     expect(popup.focus).toHaveBeenCalled();
     win.open("https://other.example/", "_blank");
     expect(nativeOpen).toHaveBeenLastCalledWith("https://other.example/", "_blank");
@@ -157,7 +233,10 @@ describe("beginGooglePopupGesture", () => {
 
   it("closes an unused window and does nothing when a popup is not needed", () => {
     const popup = popupWindow();
-    const win = { open: jest.fn(() => popup) };
+    const win = {
+      location: { origin: "https://become-app-rho.vercel.app" },
+      open: jest.fn(() => popup),
+    };
     beginGooglePopupGesture(win, true)();
     expect(popup.close).toHaveBeenCalled();
 
@@ -165,6 +244,105 @@ describe("beginGooglePopupGesture", () => {
     expect(() => beginGooglePopupGesture(quiet, false)()).not.toThrow();
     expect(quiet.open).not.toHaveBeenCalled();
     expect(beginGooglePopupGesture(null, true)()).toBeUndefined();
+    expect(beginGooglePopupGesture(null, true).popup()).toBeNull();
+  });
+
+  it("remembers the desktop popup Firebase opens without a primed window", () => {
+    const popup = popupWindow();
+    const nativeOpen = jest.fn(() => popup);
+    const win = {
+      location: { origin: "https://become-app-rho.vercel.app" },
+      open: nativeOpen,
+    };
+    const release = beginGooglePopupGesture(win, false);
+    expect(nativeOpen).not.toHaveBeenCalled();
+    expect(release.popup()).toBeNull();
+    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+    expect(win.open(handler, "firebase", "width=500")).toBe(popup);
+    expect(nativeOpen).toHaveBeenCalledWith(handler, "firebase", "width=500");
+    expect(release.popup()).toBe(popup);
+    expect(popup.location.href).toBe("about:blank");
+    release();
+    expect(popup.close).not.toHaveBeenCalled();
+    expect(win.open).toBe(nativeOpen);
+  });
+});
+
+describe("popup close detection", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("reads closed, open, and a COOP throw that hides window.closed", () => {
+    expect(readPopupClosed(null)).toBe("closed");
+    expect(readPopupClosed({ closed: false })).toBe("open");
+    expect(readPopupClosed({ closed: true })).toBe("closed");
+    expect(readPopupClosed({
+      get closed() {
+        throw new Error("Cross-Origin-Opener-Policy policy would block the window.closed call.");
+      },
+    })).toBe("unavailable");
+  });
+
+  it("waits while the chooser is open, then resolves when it closes", async () => {
+    jest.useFakeTimers();
+    let popup = null;
+    const watch = watchPopupDismissal(() => popup, { intervalMs: 20 });
+    let state = "";
+    watch.promise.then((value) => { state = value; });
+    jest.advanceTimersByTime(100);
+    await Promise.resolve();
+    expect(state).toBe("");
+    popup = { closed: false };
+    jest.advanceTimersByTime(100);
+    await Promise.resolve();
+    expect(state).toBe("");
+    popup = { closed: true };
+    jest.advanceTimersByTime(20);
+    await expect(watch.promise).resolves.toBe("closed");
+  });
+
+  it("stops waiting when sign-in finishes first", async () => {
+    jest.useFakeTimers();
+    const watch = watchPopupDismissal(() => ({ closed: false }), { intervalMs: 20 });
+    let state = "";
+    watch.promise.then((value) => { state = value; });
+    watch.stop();
+    jest.advanceTimersByTime(200);
+    await Promise.resolve();
+    expect(state).toBe("");
+  });
+
+  it("cancels when the popup is already closed and sign-in never settles", async () => {
+    const outcome = await finishPopupSignIn({
+      signIn: () => new Promise(() => {}),
+      getPopup: () => ({ closed: true }),
+      intervalMs: 1000,
+    });
+    expect(outcome).toEqual({ status: "cancelled", reason: "closed" });
+  });
+
+  it("cancels when COOP makes window.closed unreadable", async () => {
+    const outcome = await finishPopupSignIn({
+      signIn: () => new Promise(() => {}),
+      getPopup: () => ({
+        get closed() {
+          throw new Error("Cross-Origin-Opener-Policy policy would block the window.closed call.");
+        },
+      }),
+      intervalMs: 1000,
+    });
+    expect(outcome).toEqual({ status: "cancelled", reason: "unavailable" });
+  });
+
+  it("returns the user when the popup stays open", async () => {
+    const user = { displayName: "A", email: "a@b.com" };
+    const outcome = await finishPopupSignIn({
+      signIn: () => Promise.resolve({ user }),
+      getPopup: () => ({ closed: false }),
+      intervalMs: 1000,
+    });
+    expect(outcome).toEqual({ status: "success", user });
   });
 });
 
@@ -413,8 +591,69 @@ describe("startGoogleSignIn", () => {
       signInWithPopup,
       signInWithRedirect,
     });
-    expect(outcome).toEqual({ status: "error", error: closed });
+    expect(outcome).toEqual({ status: "cancelled" });
     expect(signInWithRedirect).not.toHaveBeenCalled();
+    expect(peekGoogleRedirectIntent(storage)).toBe("");
+  });
+
+  it("restores login when the popup closes before Firebase notices", async () => {
+    const storage = memoryStorage();
+    const signInWithRedirect = jest.fn();
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      allowRedirectFallback: true,
+      storage,
+      signInWithPopup: () => new Promise(() => {}),
+      signInWithRedirect,
+      getPopup: () => ({ closed: true }),
+    });
+    expect(outcome).toEqual({ status: "cancelled" });
+    expect(signInWithRedirect).not.toHaveBeenCalled();
+  });
+
+  it("restores login when COOP blocks window.closed and sign-in never settles", async () => {
+    const storage = memoryStorage();
+    const signInWithRedirect = jest.fn();
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: true,
+      useRedirect: false,
+      allowRedirectFallback: false,
+      storage,
+      signInWithPopup: () => new Promise(() => {}),
+      signInWithRedirect,
+      getPopup: () => ({
+        get closed() {
+          throw new Error("Cross-Origin-Opener-Policy policy would block the window.closed call.");
+        },
+      }),
+    });
+    expect(outcome).toEqual({ status: "cancelled" });
+    expect(signInWithRedirect).not.toHaveBeenCalled();
+    expect(peekGoogleRedirectIntent(storage)).toBe("");
+  });
+
+  it("still returns the Google user while the popup is open", async () => {
+    const user = { displayName: "A", email: "a@b.com" };
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      storage: memoryStorage(),
+      signInWithPopup: jest.fn(() => Promise.resolve({ user })),
+      signInWithRedirect: jest.fn(),
+      getPopup: () => ({ closed: false }),
+      intervalMs: 5000,
+    });
+    expect(outcome).toEqual({ status: "success", user });
   });
 
   it("clears the stored intent when redirect fails to start", async () => {

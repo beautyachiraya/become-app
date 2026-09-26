@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { auth, googleRedirectAuth, firebaseApiKey, db, storage } from "./firebase"; import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
-import { signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signOut, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
+import { signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signOut, onAuthStateChanged, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import {
   prefersGoogleRedirect, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
@@ -195,7 +195,7 @@ function usuallyLine(treatment, prefix){
 function greet(){const h=new Date().getHours();if(h<12)return"Good morning";if(h<17)return"Good afternoon";return"Good evening";}
 
 // Mock OAuth overlay — no longer opened by Sign in / Sign up.
-// Google uses a Firebase popup on desktop and a redirect on mobile. Facebook is not wired.
+// Google uses a Firebase popup. On a phone that window is opened during the tap. Facebook is not wired.
 function OAuthScreen({provider,onSuccess,onCancel}){
   const [stage,setStage]=useState("browser");
   const [progress,setProgress]=useState(0);
@@ -418,6 +418,23 @@ export default function Become(){
   const selCounts=sel?packSessionCounts(sel):{used:0,total:0,remaining:0};
 
   useEffect(()=>{
+    // Firebase restores a signed-in person after the Google tab closes and this
+    // page loads again. The screen would otherwise open on login even though
+    // the account is already signed in.
+    const unsub=onAuthStateChanged(auth, (user)=>{
+      if(!user)return;
+      setProfileForm((prev)=>{
+        if(prev&&(prev.name||prev.email))return prev;
+        return profileFromGoogleUser(user);
+      });
+      setAuthScreen("app");
+      setGoogleRedirectPending(false);
+      setAuthBusy((busy)=>busy==="google"?"":busy);
+    });
+    return unsub;
+  },[]);
+
+  useEffect(()=>{
     let active=true;
     const storage=browserSessionStorage();
     // Read before getRedirectResult, which clears Firebase's pending flag.
@@ -581,6 +598,8 @@ export default function Become(){
     const env=readGoogleRedirectEnv();
     const useRedirect=prefersGoogleRedirect(env);
     // Must run before the first await. iOS only allows window.open inside the tap.
+    // Desktop also wraps window.open so a closed Google window can end Connecting
+    // even when Cross-Origin-Opener-Policy hides window.closed from Firebase.
     const releasePopup=beginGooglePopupGesture(window, shouldPrimeGooglePopup(env));
     let outcome;
     try{
@@ -594,6 +613,7 @@ export default function Become(){
         storage:browserSessionStorage(),
         signInWithPopup,
         signInWithRedirect,
+        getPopup:function(){return releasePopup.popup();},
       });
     }catch(error){
       outcome={status:"error", error};
@@ -611,6 +631,8 @@ export default function Become(){
         else setLoginMessage(msg);
       }
     }
+    // "cancelled" is a closed popup or an unreadable window.closed. The button
+    // comes back with no red error. A real failure still sets a message above.
     if(outcome.status!=="redirecting")setAuthBusy("");
   }
   async function handlePasswordReset(){
