@@ -163,35 +163,23 @@ function noopPopupRelease() {}
 noopPopupRelease.popup = function() { return null; };
 
 /**
- * Ask the already-open phone window to load the start page with the handler
- * address in the hash. That page then leaves for Google on its own.
+ * Tell the already-open start page where Google lives, without moving it.
  *
- * iPhone Safari drops window.opener when the login page assigns the Firebase
- * handler onto the popup. The handler then cannot see this page, saves the
- * account where Become cannot read it, and the login screen says sign-in
- * didn't finish. A same-origin hash change keeps the opener attached.
+ * iPhone Safari drops window.opener when the login page assigns any new
+ * address onto the popup, including a same-origin hash. After the person
+ * picks an account, Google sends that window back to the Firebase handler.
+ * The handler can hand the account to Become only through window.opener.
+ * With the link gone, the account stays on the Firebase host and the login
+ * screen says sign-in didn't finish. The start page reads this and leaves
+ * for the handler on its own, which keeps the opener.
  */
-function navigatePopupToStartHash(popup, origin, handler) {
-  const hashed = startPageHashUrl(origin, handler);
-  if (!popup || !hashed) return false;
-  try {
-    if (popup.location && typeof popup.location.replace === "function") {
-      popup.location.replace(hashed);
-      return true;
-    }
-  } catch (err) { /* A same-origin href assignment keeps the opener too. */ }
-  try {
-    popup.location.href = hashed;
-    return true;
-  } catch (err) {
-    return false;
-  }
-}
-
-/** Backup when the popup will not take a same-origin hash change. */
 function publishHandlerUrl(popup, origin, handler) {
   if (!popup || !handler || !origin) return false;
   let handed = false;
+  try {
+    popup[GOOGLE_POPUP_URL_KEY] = handler;
+    handed = true;
+  } catch (err) { /* Storage and a message can still carry the address. */ }
   try {
     if (popup.sessionStorage) popup.sessionStorage.setItem(GOOGLE_POPUP_URL_KEY, handler);
     handed = true;
@@ -210,10 +198,10 @@ function publishHandlerUrl(popup, origin, handler) {
  * Open a same-origin window during the tap. When Firebase later asks for a
  * popup, hand it the handler address and let that window navigate itself.
  *
- * The parent must not assign the Firebase handler (location.href or replace).
- * Safari drops window.opener when the login page points the popup at
- * become-app-dde78.firebaseapp.com/__/auth/handler. The start page reads the
- * hash, a message, or storage, and opens the handler itself.
+ * The parent must not assign any URL onto the popup (location.href or
+ * replace), including a same-origin hash. Safari drops window.opener when
+ * the login page moves that window. The start page reads the handler
+ * address and opens it itself.
  *
  * Desktop does not need that head start, but it still wraps `window.open` so
  * we can see the popup Firebase opens. Google’s account page logs a
@@ -247,10 +235,8 @@ export function beginGooglePopupGesture(win, prime) {
     settled = true;
     const handler = isFirebaseAuthHandlerUrl(url) ? url : "";
     if (prime && opened && handler) {
-      // Never assign the handler from the parent. That is the Safari opener bug.
-      if (!navigatePopupToStartHash(opened, origin, handler)) {
-        publishHandlerUrl(opened, origin, handler);
-      }
+      // Never assign a URL from the parent. That is the Safari opener bug.
+      publishHandlerUrl(opened, origin, handler);
       try { if (target && target !== "_blank") opened.name = target; } catch (err) { /* name is optional */ }
       try { opened.focus(); } catch (err) { /* The window is already open. */ }
       return opened;
@@ -350,16 +336,9 @@ function quietPopupClose(error) {
  * popup is left for `onAuthStateChanged` — this does not cancel that request.
  */
 export async function finishPopupSignIn({ signIn, getPopup, readClosed, intervalMs }) {
-  let settled = false;
   const signInPromise = Promise.resolve().then(() => signIn()).then(
-    (result) => {
-      settled = true;
-      return { kind: "success", user: result && result.user };
-    },
-    (error) => {
-      settled = true;
-      return { kind: "error", error };
-    }
+    (result) => ({ kind: "success", user: result && result.user }),
+    (error) => ({ kind: "error", error })
   );
   const watch = typeof getPopup === "function"
     ? watchPopupDismissal(getPopup, { readClosed, intervalMs })
@@ -377,10 +356,59 @@ export async function finishPopupSignIn({ signIn, getPopup, readClosed, interval
   }
   if (winner.kind === "success") return { status: "success", user: winner.user };
   if (winner.kind === "dismissed") {
-    if (!settled) signInPromise.then(() => {}, () => {});
-    return { status: "cancelled", reason: winner.state };
+    // Safari hides window.closed while the account picker is open, so this
+    // can win before the person has chosen an account. Keep the sign-in.
+    // whenUser resolves with that person, or null if they really cancelled.
+    const whenUser = signInPromise.then(
+      (result) => (result && result.kind === "success" ? result.user || null : null),
+      () => null
+    );
+    return { status: "cancelled", reason: winner.state, whenUser };
   }
   return { status: "rejected", error: winner.error };
+}
+
+/**
+ * Login screen after Continue with Google returns.
+ * Cancel leaves the button up and no red line. A user who arrives after
+ * Safari hid window.closed still goes Home. This never uses the incomplete banner.
+ */
+export function immediateGoogleScreen(outcome) {
+  if (outcome && outcome.status === "success" && outcome.user) {
+    return { screen: "app", message: "", user: outcome.user };
+  }
+  if (outcome && outcome.status === "cancelled") {
+    return { screen: "login", message: "" };
+  }
+  return { screen: "login", message: "" };
+}
+
+/** The signed-in person, including one that finishes after the popup looked closed. */
+export function userFromFinishedPick(outcome) {
+  if (outcome && outcome.status === "success" && outcome.user) {
+    return Promise.resolve(outcome.user);
+  }
+  if (outcome && outcome.whenUser && typeof outcome.whenUser.then === "function") {
+    return outcome.whenUser;
+  }
+  return Promise.resolve(null);
+}
+
+/**
+ * Page-load context for getRedirectResult.
+ * An empty result on a phone is not a failed redirect: the account comes
+ * back through the popup. Calling that "didn't finish" is the red banner.
+ */
+export function redirectResultContext(env, details) {
+  const source = env || {};
+  const extra = details || {};
+  const phone = isIOSDevice(source) || /Android/i.test(source.userAgent || "");
+  return {
+    hadPendingRedirect: extra.hadPendingRedirect,
+    navigationType: extra.navigationType || "",
+    restoredFromCache: !!extra.restoredFromCache,
+    popupReturn: phone || !!extra.popupReturn,
+  };
 }
 
 /** Firebase writes this before leaving, as JSON `"true"`, and clears it on return. */
@@ -571,7 +599,11 @@ export async function startGoogleSignIn({
     intervalMs,
   });
   if (raced.status === "success") return { status: "success", user: raced.user };
-  if (raced.status === "cancelled") return { status: "cancelled" };
+  if (raced.status === "cancelled") {
+    return raced.whenUser
+      ? { status: "cancelled", whenUser: raced.whenUser }
+      : { status: "cancelled" };
+  }
   const error = raced.error;
   if (allowRedirectFallback === false || !shouldFallbackToRedirect(error)) {
     if (quietPopupClose(error)) return { status: "cancelled" };

@@ -5,7 +5,8 @@ import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LAN
 import {
   prefersGoogleRedirect, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
   browserSessionStorage, peekGoogleRedirectIntent, takeGoogleRedirectIntent, clearGoogleRedirectIntent,
-  hadPendingGoogleRedirect, clearPendingGoogleRedirect, readPageNavigationType, startGoogleSignIn, loadGoogleRedirectResult,
+  hadPendingGoogleRedirect, clearPendingGoogleRedirect, readPageNavigationType, redirectResultContext,
+  startGoogleSignIn, loadGoogleRedirectResult, immediateGoogleScreen,
   adoptRedirectUser, googleRedirectOutcome, profileFromGoogleUser, GOOGLE_REDIRECT_INCOMPLETE,
 } from "./googleAuth";
 import { createDataClient, formatWriteError, formatProfilePhotoSaveError } from "./userData";
@@ -440,11 +441,10 @@ export default function Become(){
     // Read before getRedirectResult, which clears Firebase's pending flag.
     // Phones sign in with a popup. An empty redirect result on those devices
     // is a failed handoff or a leftover flag, not a reason to say sign-in didn't finish.
-    const redirectContext={
+    const redirectContext=redirectResultContext(readGoogleRedirectEnv(), {
       hadPendingRedirect:hadPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]"),
       navigationType:readPageNavigationType(),
-      popupReturn:shouldPrimeGooglePopup(readGoogleRedirectEnv()),
-    };
+    });
     function showGoogleRedirectError(intent, error){
       const msg=mapAuthError(error,"google");
       if(intent==="signup"){
@@ -630,16 +630,29 @@ export default function Become(){
     }finally{
       releasePopup();
     }
-    if(outcome.status==="success"&&outcome.user){
-      setProfileForm(profileFromGoogleUser(outcome.user));
+    function enterFromGoogle(user){
+      setProfileForm(profileFromGoogleUser(user));
       setJustSignedUp(!!fromSignup);
       setAuthScreen("app");
+      setLoginMessage(function(msg){return msg===GOOGLE_REDIRECT_INCOMPLETE?"":msg;});
+      setSignupMessage(function(msg){return msg===GOOGLE_REDIRECT_INCOMPLETE?"":msg;});
+      setGoogleRedirectPending(false);
+    }
+    const immediate=immediateGoogleScreen(outcome);
+    if(immediate.screen==="app"&&immediate.user){
+      enterFromGoogle(immediate.user);
     }else if(outcome.status==="error"){
       const msg=mapAuthError(outcome.error,"google");
       if(msg){
         if(fromSignup)setSignupMessage(msg);
         else setLoginMessage(msg);
       }
+    }else if(outcome.whenUser){
+      // The button can come back while Safari hides window.closed and the
+      // person is still on the account picker. Home opens when they finish.
+      outcome.whenUser.then(function(user){
+        if(user)enterFromGoogle(user);
+      });
     }
     // "cancelled" is a closed popup or an unreadable window.closed. The button
     // comes back with no red error. A real failure still sets a message above.

@@ -41,6 +41,9 @@
       function readLocal() {
         try { return localStorage.getItem(KEY) || ""; } catch (err) { return ""; }
       }
+      function readWindow() {
+        try { return window[KEY] || ""; } catch (err) { return ""; }
+      }
       function readHash() {
         try {
           var hash = location.hash || "";
@@ -59,16 +62,16 @@
         location.replace(url);
         return true;
       }
-      // This page navigates itself. The login page must not point the popup at Firebase.
-      if (go(readHash()) || go(readStored()) || go(readLocal())) return;
+      // This page navigates itself. The login page must not change this window's address.
+      if (go(readWindow()) || go(readHash()) || go(readStored()) || go(readLocal())) return;
       window.addEventListener("message", function (event) {
         if (event.origin !== location.origin) return;
         var data = event.data || {};
         if (data.type !== TYPE) return;
-        go(data.url || readStored() || readLocal() || readHash());
+        go(data.url || readWindow() || readStored() || readLocal() || readHash());
       });
       var timer = setInterval(function () {
-        if (go(readHash()) || go(readStored()) || go(readLocal())) clearInterval(timer);
+        if (go(readWindow()) || go(readHash()) || go(readStored()) || go(readLocal())) clearInterval(timer);
       }, 50);
       setTimeout(function () { clearInterval(timer); }, 20000);
     })();
