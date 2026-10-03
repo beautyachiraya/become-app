@@ -13,6 +13,8 @@ import ProfileAvatarImage from "./profileAvatar";
 import { changeProfilePhoto, profileInitial, remotePhotoUrl } from "./profilePhoto";
 import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment, isJournal, lastSessionDate } from "./packageStatus";
 import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment, explicitPackKind } from "./treatmentForm";
+import { purchaseHistory, purchaseHistoryIsDerivedOnly, topUpTreatment } from "./purchases";
+import { BuyAgainSheet, PurchaseHistorySection } from "./purchaseUi";
 import TreatmentFormFields from "./TreatmentFormFields";
 import { JournalHomeCard, JournalDetailStats, JournalVisitList } from "./journalUi";
 import { BookingScreen } from "./BookingScreen";
@@ -100,6 +102,20 @@ const T = {
     paid: "Paid",
     pack_kind: "Package type",
     buy_more: "Buy more",
+    purchase_history: "Purchases",
+    purchase_history_sub: "Sessions added to this package, from the first buy onward.",
+    purchase_empty: "Nothing saved here yet.",
+    purchase_derived_note: "Saved before purchases were tracked. This line is taken from the card — the date wasn't stored.",
+    purchase_date_unknown: "Date not recorded",
+    purchase_exp: "Exp",
+    buy_again_title: "Buy again",
+    buy_again_sessions: "How many sessions did you add?",
+    buy_again_sessions_ph: "e.g. 4",
+    buy_again_expiry: "New expiry (optional)",
+    buy_again_keep: "Leave blank to keep it.",
+    buy_again_current: "Expires",
+    buy_again_none: "No expiry on this card yet. Add one if the clinic gave you a date.",
+    buy_again_save: "Save purchase",
     completed_session: "Completed session",
     no_visits: "No visits logged",
     track_package: "Package",
@@ -148,6 +164,20 @@ const T = {
     paid: "ซื้อแล้ว",
     pack_kind: "ประเภทแพ็กเกจ",
     buy_more: "ซื้อเพิ่ม",
+    purchase_history: "การซื้อ",
+    purchase_history_sub: "เซสชันที่เติมเข้าแพ็กเกจนี้ ตั้งแต่ครั้งแรก",
+    purchase_empty: "ยังไม่มีการซื้อที่บันทึกไว้",
+    purchase_derived_note: "บันทึกไว้ก่อนมีประวัติการซื้อ บรรทัดนี้มาจากการ์ด — ไม่ได้เก็บวันที่ไว้",
+    purchase_date_unknown: "ไม่ได้บันทึกวันที่ไว้",
+    purchase_exp: "หมดอายุ",
+    buy_again_title: "ซื้อเพิ่ม",
+    buy_again_sessions: "ซื้อเพิ่มกี่เซสชัน",
+    buy_again_sessions_ph: "เช่น 4",
+    buy_again_expiry: "วันหมดอายุใหม่ (ไม่บังคับ)",
+    buy_again_keep: "เว้นว่างไว้ถ้าอยากใช้วันเดิม",
+    buy_again_current: "หมดอายุ",
+    buy_again_none: "การ์ดนี้ยังไม่มีวันหมดอายุ ใส่ได้ถ้าคลินิกให้วันมา",
+    buy_again_save: "บันทึกการซื้อ",
     completed_session: "เซสชันที่ทำแล้ว",
     no_visits: "ยังไม่มีเซสชันที่บันทึก",
     track_package: "แพ็กเกจ",
@@ -385,6 +415,9 @@ export default function Become(){
   const [showEditSession,setShowEditSession]=useState(false);
   const [editSessionForm,setEditSessionForm]=useState(null);
   const [logTargetIdx,setLogTargetIdx]=useState(null);
+  const [showBuyAgain,setShowBuyAgain]=useState(false);
+  const [buyAgainId,setBuyAgainId]=useState(null);
+  const [buyAgainForm,setBuyAgainForm]=useState({sessions:"",expiryDate:""});
   const fileRef=useRef(null);
   const editPhotoRef=useRef(null);
   const [language,setLanguage]=useState("English"); const t=(key)=>{const lang=language==="Thai — ภาษาไทย"?"th":"en";return(T[lang]&&T[lang][key])||T.en[key];};
@@ -416,6 +449,20 @@ export default function Become(){
   const sortedSessions=sel?coerceSessions(sel.sessions).slice().sort((a,b)=>new Date(a.date)-new Date(b.date)):[];
   const selSession=(sel&&sessionIdx!==null)?sortedSessions[sessionIdx]:null;
   const selCounts=sel?packSessionCounts(sel):{used:0,total:0,remaining:0};
+  const buyAgainPack=treatments.find(t=>String(t.id)===String(buyAgainId))||null;
+  function sessionsAddedLabel(n){
+    const count=Number(n)||0;
+    if(language==="Thai — ภาษาไทย")return `+${count} เซสชัน`;
+    return `+${count} ${count===1?"session":"sessions"}`;
+  }
+  function purchaseRowsFor(treatment){
+    return purchaseHistory(treatment).map((p,i)=>{
+      const parts=[p.date?fmtDate(p.date):t("purchase_date_unknown")];
+      if(p.expiryDate)parts.push(`${t("purchase_exp")} ${fmtShort(p.expiryDate)}`);
+      return {key:`${i}-${p.date||"undated"}-${p.sessionsAdded}`,title:sessionsAddedLabel(p.sessionsAdded),meta:parts.join(" · ")};
+    });
+  }
+  const buyAgainHint=buyAgainPack?(buyAgainPack.expiryDate?`${t("buy_again_current")} ${fmtDate(buyAgainPack.expiryDate)}. ${t("buy_again_keep")}`:t("buy_again_none")):"";
 
   useEffect(()=>{
     // Firebase restores a signed-in person after the Google tab closes and this
@@ -762,18 +809,30 @@ async function logSession(){
     }
   }
   function goToDetail(id){setSelectedId(id);setDetailTab("sessions");setView("detail");}
-  function buyMore(pack){
-    const known=TREATMENT_TYPES.includes(pack.name);
-    setForm({
-      ...emptyTreatmentForm(),
-      name:known?pack.name:"Other",
-      customName:known?"":pack.name,
-      clinic:pack.clinic||"",
-      brandUnit:pack.brandUnit||"",
-      frequency:pack.frequency||30,
-      frequencyLabel:pack.frequencyLabel||"Monthly",
-    });
-    setShowAdd(true);
+  function openBuyAgain(pack){
+    if(!pack||isJournal(pack))return;
+    setBuyAgainId(pack.id);
+    setBuyAgainForm({sessions:"",expiryDate:""});
+    setShowBuyAgain(true);
+  }
+  async function saveBuyAgain(){
+    const current=(treatmentsRef.current||[]).find(t=>String(t.id)===String(buyAgainId));
+    if(!current)return;
+    const updated=topUpTreatment(current,{sessionsAdded:buyAgainForm.sessions,expiryDate:buyAgainForm.expiryDate});
+    if(!updated)return;
+    const user=auth.currentUser;
+    setIsSaving(true);
+    try{
+      if(user)await dataClient.writeTreatment(user.uid,updated);
+      setTreatments(prev=>prev.map(t=>String(t.id)===String(updated.id)?updated:t));
+      setSyncError("");
+      setShowBuyAgain(false);
+      setBuyAgainForm({sessions:"",expiryDate:""});
+    }catch(e){
+      showWriteError("Couldn't save this purchase", e);
+    }finally{
+      setIsSaving(false);
+    }
   }
   function openEdit(treatment){
     const journal=isJournal(treatment);
@@ -1754,8 +1813,8 @@ async function saveEditSession(){
                             </div>
                           </div>
                           {item.usedUp&&(
-                            <button className="btn btn-g" style={{marginTop:14,padding:"10px 16px"}}
-                              onClick={e=>{e.stopPropagation();buyMore(pack);}}>
+                            <button className="btn btn-g" data-testid="history-buy-more" style={{marginTop:14,padding:"10px 16px"}}
+                              onClick={e=>{e.stopPropagation();openBuyAgain(pack);}}>
                               {t("buy_more")}
                             </button>
                           )}
@@ -1957,6 +2016,16 @@ async function saveEditSession(){
                         + Log Session {selCounts.used+1}
                       </button>
                     )}
+                    <PurchaseHistorySection
+                      title={t("purchase_history")}
+                      subtitle={t("purchase_history_sub")}
+                      note={purchaseHistoryIsDerivedOnly(sel)?t("purchase_derived_note"):""}
+                      emptyLabel={t("purchase_empty")}
+                      rows={purchaseRowsFor(sel)}
+                      buyLabel={`+ ${t("buy_more")}`}
+                      onBuyAgain={()=>openBuyAgain(sel)}
+                      disabled={isSaving}
+                    />
                   </div>
                 )}
 
@@ -2068,7 +2137,7 @@ async function saveEditSession(){
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:300,color:"#4A3C30",lineHeight:1.7,fontStyle:"italic"}}>"{selSession.note}"</p>
                   </div>
                 )}
-                <div style={{textAlign:"center",marginTop:8,marginBottom:8}}>                   <button onClick={removeSession} disabled={isSaving} style={{background:"none",border:"none",color:"#C4B8A8",fontSize:12,fontFamily:"inherit",cursor:isSaving?"not-allowed":"pointer",fontWeight:500}}>                     {isSaving?"Removing…":"Remove this session"}                   </button>                 </div>                 {ac&&(
+                {ac&&(
                   <div style={{background:pal.bg,borderRadius:20,padding:"18px 20px",border:`1px solid ${pal.accent}15`}}>
                     <p style={{fontSize:10,fontWeight:600,color:pal.text,letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Aftercare reminder</p>
                     <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:300,lineHeight:1.65,fontStyle:"italic",marginBottom:14}}>"{ac.tip}"</p>
@@ -2084,6 +2153,28 @@ async function saveEditSession(){
         </div>
       </div>
     )}
+
+          {showBuyAgain&&buyAgainPack&&(
+            <BuyAgainSheet
+              name={buyAgainPack.name}
+              clinic={buyAgainPack.clinic}
+              sessions={buyAgainForm.sessions}
+              expiryDate={buyAgainForm.expiryDate}
+              hint={buyAgainHint}
+              labels={{
+                title:t("buy_again_title"),
+                sessions:t("buy_again_sessions"),
+                sessionsPlaceholder:t("buy_again_sessions_ph"),
+                expiry:t("buy_again_expiry"),
+                save:t("buy_again_save"),
+                saving:"Saving…",
+              }}
+              isSaving={isSaving}
+              onChange={setBuyAgainForm}
+              onSave={saveBuyAgain}
+              onClose={()=>setShowBuyAgain(false)}
+            />
+          )}
 
           {/* ADD MODAL */}
           {showAdd&&(

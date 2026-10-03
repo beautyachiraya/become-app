@@ -1,3 +1,5 @@
+import { purchaseFromPackageForm, purchasesAfterPackageEdit } from "./purchases";
+
 /** Blank Add Treatment form. Package source (promo or paid) is not collected. */
 export function emptyTreatmentForm() {
   return {
@@ -66,7 +68,7 @@ export function resolveFrequencyDays(form) {
  * New packages are a single type. kind and source are omitted so a write
  * does not force promo or paid. Existing Firestore fields are left as stored.
  */
-export function buildNewTreatment(form, { id, palette } = {}) {
+export function buildNewTreatment(form, { id, palette, now } = {}) {
   if (form && form.trackMode === "journal") {
     const interval = journalInterval(form);
     return {
@@ -101,6 +103,7 @@ export function buildNewTreatment(form, { id, palette } = {}) {
     palette,
     notes: form.notes,
     sessions: [],
+    purchases: [purchaseFromPackageForm(form, now)],
   };
 }
 
@@ -143,15 +146,22 @@ export function buildEditedTreatment(existing, form) {
       notes: form.notes,
     };
   }
-  return {
+  const totalSessions = parseInt(form.totalSessions, 10);
+  const next = {
     ...existing,
     name: form.name,
     clinic: form.clinic,
     brandUnit: form.brandUnit,
-    totalSessions: parseInt(form.totalSessions, 10),
+    totalSessions,
     frequency: resolveFrequencyDays(form),
     frequencyLabel: form.frequencyLabel,
     expiryDate: form.expiryDate,
     notes: form.notes,
   };
+  const purchases = purchasesAfterPackageEdit(existing, {
+    totalSessions,
+    expiryDate: form.expiryDate,
+  });
+  if (purchases) next.purchases = purchases;
+  return next;
 }

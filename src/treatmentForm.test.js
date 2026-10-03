@@ -65,7 +65,7 @@ describe("new package writes", () => {
         totalSessions: "6",
         notes: "Full legs",
       },
-      { id: 42, palette: 1 }
+      { id: 42, palette: 1, now: new Date(2026, 9, 3) }
     );
     expect(created).toEqual({
       id: 42,
@@ -80,6 +80,7 @@ describe("new package writes", () => {
       palette: 1,
       notes: "Full legs",
       sessions: [],
+      purchases: [{ date: "2026-10-03", sessionsAdded: 6 }],
     });
     expect(created.kind).toBeUndefined();
     expect(created.source).toBeUndefined();
@@ -201,6 +202,7 @@ describe("edited package writes", () => {
         source: "spring-offer",
         sessions: [{ id: 1, date: "2026-01-01" }],
         palette: 2,
+        purchases: [{ date: "2026-01-02", sessionsAdded: 3, expiryDate: "2026-06-30" }],
       },
       {
         name: "Botox",
@@ -218,6 +220,7 @@ describe("edited package writes", () => {
     expect(kept.sessions).toEqual([{ id: 1, date: "2026-01-01" }]);
     expect(kept.clinic).toBe("Aesthetic Studio");
     expect(kept.totalSessions).toBe(3);
+    expect(kept.purchases).toEqual([{ date: "2026-01-02", sessionsAdded: 3, expiryDate: "2026-09-30" }]);
 
     const fresh = buildEditedTreatment(
       { id: 8, sessions: [] },
@@ -235,6 +238,7 @@ describe("edited package writes", () => {
     expect(fresh.kind).toBeUndefined();
     expect(fresh.source).toBeUndefined();
     expect(fresh.trackMode).toBeUndefined();
+    expect(fresh.purchases).toBeUndefined();
   });
 
   it("keeps a journal diary nulls when its details change", () => {
