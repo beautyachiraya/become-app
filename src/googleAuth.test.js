@@ -34,6 +34,9 @@ import {
   loadGoogleRedirectResult,
   resetGoogleRedirectResultForTests,
   adoptRedirectUser,
+  immediateGoogleScreen,
+  userFromFinishedPick,
+  redirectResultContext,
 } from "./googleAuth";
 
 function memoryStorage(initial) {
@@ -197,6 +200,7 @@ describe("isFirebaseAuthHandlerUrl", () => {
     expect(html).toContain('"/__/auth/handler"');
     expect(html).toContain("location.replace(url)");
     expect(html).toContain("readHash");
+    expect(html).toContain("readWindow");
   });
 
   it("has the start page navigate itself to the Firebase handler", () => {
@@ -234,6 +238,7 @@ describe("isFirebaseAuthHandlerUrl", () => {
         URL,
         decodeURIComponent,
       };
+      if (setup.windowValue) sandbox[GOOGLE_POPUP_URL_KEY] = setup.windowValue;
       sandbox.timers = timers;
       sandbox.window = sandbox;
       sandbox.window.addEventListener = jest.fn();
@@ -241,6 +246,12 @@ describe("isFirebaseAuthHandlerUrl", () => {
       vm.runInContext(match[1], sandbox);
       return { location, sessionData, localData, sandbox };
     }
+
+    const fromWindow = runStartPage({
+      windowValue: handler,
+    });
+    expect(fromWindow.location.replace).toHaveBeenCalledTimes(1);
+    expect(fromWindow.location.replace).toHaveBeenCalledWith(handler);
 
     const fromHash = runStartPage({
       hash: "#" + encodeURIComponent(handler),
@@ -287,82 +298,54 @@ describe("beginGooglePopupGesture", () => {
     };
   }
 
-  it("lets the phone window open the handler itself so the opener stays attached", () => {
+  it("does not move the phone popup, because Safari would drop window.opener", () => {
+    let opener = { page: "app" };
+    const assigned = [];
     const popup = popupWindow();
-    const nativeOpen = jest.fn(() => popup);
-    const origin = "https://become-app-rho.vercel.app";
-    const win = {
-      location: { origin },
-      open: nativeOpen,
+    Object.defineProperty(popup, "opener", { get: () => opener });
+    popup.location = {
+      href: "https://become-app-rho.vercel.app/google-auth-start.html",
+      replace(url) {
+        assigned.push(url);
+        opener = null;
+      },
+      set href(url) {
+        assigned.push(url);
+        opener = null;
+      },
     };
+    const origin = "https://become-app-rho.vercel.app";
+    const nativeOpen = jest.fn(() => popup);
+    const win = { location: { origin }, open: nativeOpen };
     const release = beginGooglePopupGesture(win, true);
     expect(nativeOpen).toHaveBeenCalledWith(
       origin + GOOGLE_AUTH_START_PATH,
       "become-google-auth"
     );
     const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
-    const assigned = [];
-    popup.location = {
-      _href: "about:blank",
-      get href() { return this._href; },
-      set href(value) {
-        assigned.push(value);
-        this._href = value;
-      },
-    };
-    const handed = win.open(handler, "event", "width=500");
-    expect(handed).toBe(popup);
-    const hashed = startPageHashUrl(origin, handler);
-    expect(popup.location.href).toBe(hashed);
-    expect(assigned).toEqual([hashed]);
-    expect(assigned.some((value) => isFirebaseAuthHandlerUrl(value))).toBe(false);
-    expect(handlerUrlFromStartHash("#" + popup.location.href.split("#")[1])).toBe(handler);
-    expect(popup.location.href.startsWith(origin + GOOGLE_AUTH_START_PATH)).toBe(true);
-    expect(popup.postMessage).not.toHaveBeenCalled();
+    expect(win.open(handler, "event", "width=500")).toBe(popup);
+    expect(assigned).toEqual([]);
+    expect(popup.opener).toEqual({ page: "app" });
+    expect(popup[GOOGLE_POPUP_URL_KEY]).toBe(handler);
+    expect(popup.data[GOOGLE_POPUP_URL_KEY]).toBe(handler);
+    expect(popup.postMessage).toHaveBeenCalledWith(
+      { type: GOOGLE_POPUP_NAV_MESSAGE, url: handler },
+      origin
+    );
     expect(popup.focus).toHaveBeenCalled();
+    // The Firebase handler can hand the account back only when opener is still
+    // the login page. Parent location assignment is what used to clear it.
+    expect(popup.opener).toBeTruthy();
+    const delivered = popup.opener ? { displayName: "Achiraya", email: "a@example.com" } : null;
+    expect(delivered).toEqual({ displayName: "Achiraya", email: "a@example.com" });
+    expect(immediateGoogleScreen({ status: "success", user: delivered }).message).not.toBe(
+      GOOGLE_REDIRECT_INCOMPLETE
+    );
+    expect(immediateGoogleScreen({ status: "success", user: delivered }).screen).toBe("app");
     win.open("https://other.example/", "_blank");
     expect(nativeOpen).toHaveBeenLastCalledWith("https://other.example/", "_blank");
     release();
     expect(popup.close).not.toHaveBeenCalled();
-  });
-
-  it("replaces the popup with the start-page hash and does not assign the handler if that throws", () => {
-    const origin = "https://become-app-rho.vercel.app";
-    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
-    const hashed = startPageHashUrl(origin, handler);
-
-    const replaced = popupWindow();
-    replaced.location.replace = jest.fn();
-    const win = {
-      location: { origin },
-      open: jest.fn(() => replaced),
-    };
-    beginGooglePopupGesture(win, true);
-    expect(win.open(handler, "firebase", "width=500")).toBe(replaced);
-    expect(replaced.location.replace).toHaveBeenCalledWith(hashed);
-    expect(replaced.location.href).toBe("about:blank");
-    expect(isFirebaseAuthHandlerUrl(replaced.location.href)).toBe(false);
-
-    const fallback = popupWindow();
-    const assigned = [];
-    fallback.location = {
-      _href: "about:blank",
-      replace() { throw new Error("replace blocked"); },
-      get href() { return this._href; },
-      set href(value) {
-        assigned.push(value);
-        this._href = value;
-      },
-    };
-    const winFallback = {
-      location: { origin },
-      open: jest.fn(() => fallback),
-    };
-    beginGooglePopupGesture(winFallback, true);
-    expect(winFallback.open(handler, "firebase")).toBe(fallback);
-    expect(fallback.location.href).toBe(hashed);
-    expect(assigned).toEqual([hashed]);
-    expect(assigned.some((value) => value === handler)).toBe(false);
   });
 
   it("hands the handler through storage and a message when the popup location cannot change", () => {
@@ -483,7 +466,10 @@ describe("popup close detection", () => {
       getPopup: () => ({ closed: true }),
       intervalMs: 1000,
     });
-    expect(outcome).toEqual({ status: "cancelled", reason: "closed" });
+    expect(outcome.status).toBe("cancelled");
+    expect(outcome.reason).toBe("closed");
+    expect(outcome.whenUser).toEqual(expect.any(Promise));
+    expect(immediateGoogleScreen(outcome)).toEqual({ screen: "login", message: "" });
   });
 
   it("cancels when COOP makes window.closed unreadable", async () => {
@@ -496,7 +482,32 @@ describe("popup close detection", () => {
       }),
       intervalMs: 1000,
     });
-    expect(outcome).toEqual({ status: "cancelled", reason: "unavailable" });
+    expect(outcome.status).toBe("cancelled");
+    expect(outcome.reason).toBe("unavailable");
+    expect(immediateGoogleScreen(outcome).message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+  });
+
+  it("still returns the picked account after Safari hides window.closed", async () => {
+    let finishPick;
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    const outcome = await finishPopupSignIn({
+      signIn: () => new Promise((resolve) => { finishPick = resolve; }),
+      getPopup: () => ({
+        get closed() {
+          throw new Error("Cross-Origin-Opener-Policy policy would block the window.closed call.");
+        },
+      }),
+      intervalMs: 1000,
+    });
+    expect(immediateGoogleScreen(outcome)).toEqual({ screen: "login", message: "" });
+    finishPick({ user });
+    await expect(userFromFinishedPick(outcome)).resolves.toBe(user);
+    expect(immediateGoogleScreen({ status: "success", user })).toEqual({
+      screen: "app",
+      message: "",
+      user,
+    });
+    expect(immediateGoogleScreen({ status: "success", user }).message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
   });
 
   it("returns the user when the popup stays open", async () => {
@@ -619,6 +630,50 @@ describe("googleRedirectOutcome", () => {
       hadPendingRedirect: true,
       navigationType: "navigate",
     }).message).toBe(GOOGLE_REDIRECT_INCOMPLETE);
+  });
+
+  it("does not paint didn't finish after a real iPhone account pick", () => {
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    const iphone = redirectResultContext(
+      { userAgent: IPHONE_SAFARI },
+      { hadPendingRedirect: true, navigationType: "navigate" }
+    );
+    // A normal Safari tab, a home-screen icon, and an iPhone that asks for the
+    // desktop site all come back through the popup. An empty redirect result
+    // there is not the red line. A picked account is Home.
+    expect(iphone.popupReturn).toBe(true);
+    expect(googleRedirectOutcome({ user }, "login", iphone)).toEqual({
+      status: "success",
+      fromSignup: false,
+      profile: { name: "Achiraya", email: "a@example.com", phone: "" },
+    });
+    expect(googleRedirectOutcome(null, "login", iphone)).toEqual({
+      status: "abandoned",
+      fromSignup: false,
+    });
+    expect(redirectResultContext(
+      { userAgent: IPHONE_SAFARI, standalone: true },
+      { hadPendingRedirect: true, navigationType: "navigate" }
+    ).popupReturn).toBe(true);
+    expect(redirectResultContext(
+      {
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+        platform: "MacIntel",
+        maxTouchPoints: 5,
+      },
+      { hadPendingRedirect: true, navigationType: "navigate" }
+    ).popupReturn).toBe(true);
+
+    const desktop = redirectResultContext(
+      {
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        platform: "MacIntel",
+        maxTouchPoints: 0,
+      },
+      { hadPendingRedirect: true, navigationType: "navigate" }
+    );
+    expect(desktop.popupReturn).toBe(false);
+    expect(googleRedirectOutcome(null, "login", desktop).message).toBe(GOOGLE_REDIRECT_INCOMPLETE);
   });
 });
 
@@ -829,7 +884,8 @@ describe("startGoogleSignIn", () => {
       signInWithRedirect,
       getPopup: () => ({ closed: true }),
     });
-    expect(outcome).toEqual({ status: "cancelled" });
+    expect(outcome.status).toBe("cancelled");
+    expect(immediateGoogleScreen(outcome).message).toBe("");
     expect(signInWithRedirect).not.toHaveBeenCalled();
   });
 
@@ -852,9 +908,42 @@ describe("startGoogleSignIn", () => {
         },
       }),
     });
-    expect(outcome).toEqual({ status: "cancelled" });
+    expect(outcome.status).toBe("cancelled");
+    expect(outcome.whenUser).toEqual(expect.any(Promise));
+    expect(immediateGoogleScreen(outcome)).toEqual({ screen: "login", message: "" });
     expect(signInWithRedirect).not.toHaveBeenCalled();
     expect(peekGoogleRedirectIntent(storage)).toBe("");
+  });
+
+  it("opens Home when the account pick finishes after Safari hides window.closed", async () => {
+    let finishPick;
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    const storage = memoryStorage();
+    const outcome = await startGoogleSignIn({
+      popupAuth,
+      redirectAuth,
+      provider,
+      fromSignup: false,
+      useRedirect: false,
+      allowRedirectFallback: false,
+      storage,
+      signInWithPopup: () => new Promise((resolve) => { finishPick = resolve; }),
+      signInWithRedirect: jest.fn(),
+      getPopup: () => ({
+        get closed() {
+          throw new Error("Cross-Origin-Opener-Policy policy would block the window.closed call.");
+        },
+      }),
+    });
+    expect(outcome.status).toBe("cancelled");
+    expect(immediateGoogleScreen(outcome)).toEqual({ screen: "login", message: "" });
+    expect(peekGoogleRedirectIntent(storage)).toBe("");
+    finishPick({ user });
+    await expect(userFromFinishedPick(outcome)).resolves.toBe(user);
+    expect(googleRedirectOutcome({ user }, "login", redirectResultContext(
+      { userAgent: IPHONE_SAFARI },
+      { hadPendingRedirect: true, navigationType: "navigate" }
+    )).status).toBe("success");
   });
 
   it("still returns the Google user while the popup is open", async () => {
