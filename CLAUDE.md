@@ -35,7 +35,6 @@ When adding a new UI flow, match this existing brand style rather than introduci
 ## Current feature areas
 
 - Core session/package tracking: create, edit, log a session, delete, expiry tracking, "days until next session" countdown ring
-- Per-treatment aftercare guide (do's/don'ts/tips) keyed by treatment type
 - Session photo upload + notes, editable after logging
 - Profile screen: name/email/phone, avatar upload, language + currency pickers (English/Thai, THB/USD/AED)
 - In-app Privacy Policy and Terms of Service modals, written for Thai PDPA compliance, gating sign-up until both are accepted
