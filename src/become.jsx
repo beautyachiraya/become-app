@@ -3,11 +3,12 @@ import { auth, googleRedirectAuth, firebaseApiKey, db, storage } from "./firebas
 import { signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signOut, onAuthStateChanged, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import {
-  prefersGoogleRedirect, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
+  prefersGoogleRedirect, prefersGoogleRelay, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
   browserSessionStorage, peekGoogleRedirectIntent, takeGoogleRedirectIntent, clearGoogleRedirectIntent,
   hadPendingGoogleRedirect, clearPendingGoogleRedirect, readPageNavigationType, redirectResultContext,
-  startGoogleSignIn, loadGoogleRedirectResult, immediateGoogleScreen,
+  startGoogleSignIn, startIphoneGoogleSignIn, loadGoogleRedirectResult, immediateGoogleScreen,
   adoptRedirectUser, googleRedirectOutcome, profileFromGoogleUser, GOOGLE_REDIRECT_INCOMPLETE,
+  googleAuthRelayUrl, listenForGoogleRelay, userFromGoogleRelayEvent,
 } from "./googleAuth";
 import { createDataClient, formatWriteError, formatProfilePhotoSaveError } from "./userData";
 import ProfileAvatarImage from "./profileAvatar";
@@ -439,8 +440,9 @@ export default function Become(){
     let active=true;
     const storage=browserSessionStorage();
     // Read before getRedirectResult, which clears Firebase's pending flag.
-    // iPhone Safari comes back through this full-page redirect. Android still
-    // uses a popup, so an empty result there is not "didn't finish".
+    // A normal iPhone tab signs in from the popup relay, so an empty result
+    // there is not "didn't finish". Android is the same. In-app browsers and
+    // the home-screen icon still come back through a full-page redirect.
     const redirectContext=redirectResultContext(readGoogleRedirectEnv(), {
       hadPendingRedirect:hadPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]"),
       navigationType:readPageNavigationType(),
@@ -600,6 +602,7 @@ export default function Become(){
     setAuthBusy("google");
     const env=readGoogleRedirectEnv();
     const useRedirect=prefersGoogleRedirect(env);
+    const useRelay=prefersGoogleRelay(env);
     const storage=browserSessionStorage();
     if(!useRedirect){
       // A popup must not inherit a leftover redirect flag, or a failed handoff
@@ -608,27 +611,88 @@ export default function Become(){
       clearPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]");
     }
     // Must run before the first await. iOS only allows window.open inside the tap.
-    // Desktop also wraps window.open so a closed Google window can end Connecting
-    // even when Cross-Origin-Opener-Policy hides window.closed from Firebase.
+    // The account chooser opens first. On a normal iPhone tab the relay opens
+    // second, still inside the tap, and never follows Google.
     const releasePopup=beginGooglePopupGesture(window, shouldPrimeGooglePopup(env));
-    let outcome;
-    try{
-      outcome=await startGoogleSignIn({
-        popupAuth:auth,
-        redirectAuth:googleRedirectAuth,
-        provider:googleProvider,
-        fromSignup,
-        useRedirect,
-        allowRedirectFallback:redirectFallbackAllowed(env),
-        storage,
-        signInWithPopup,
-        signInWithRedirect,
-        getPopup:function(){return releasePopup.popup();},
+    let stopRelay=function(){};
+    let relayWindow=null;
+    let waitForRelayUser=null;
+    if(useRelay){
+      const relayUrl=googleAuthRelayUrl({
+        apiKey:firebaseApiKey,
+        parentOrigin:window.location.origin,
       });
+      relayWindow=releasePopup.openRelay(relayUrl);
+      let resolveRelayUser;
+      let rejectRelayUser;
+      waitForRelayUser=function(){
+        return new Promise(function(resolve, reject){
+          resolveRelayUser=resolve;
+          rejectRelayUser=reject;
+        });
+      };
+      const relayPromise=waitForRelayUser();
+      waitForRelayUser=function(){return relayPromise;};
+      let relaySettled=false;
+      const unlisten=listenForGoogleRelay(window, function(account){
+        if(relaySettled)return;
+        relaySettled=true;
+        if(account.error){
+          rejectRelayUser(account.error);
+          return;
+        }
+        userFromGoogleRelayEvent({
+          event:account.event,
+          apiKey:firebaseApiKey,
+          auth,
+          signInWithCredential,
+          credentialFromTokens:function(idToken, accessToken){
+            return GoogleAuthProvider.credential(idToken, accessToken);
+          },
+        }).then(resolveRelayUser, rejectRelayUser);
+      });
+      stopRelay=function(){
+        unlisten();
+        try{ if(relayWindow)relayWindow.close(); }catch(err){ /* already closed */ }
+      };
+    }
+    let outcome=null;
+    try{
+      if(useRelay){
+        outcome=await startIphoneGoogleSignIn({
+          popupAuth:auth,
+          provider:googleProvider,
+          storage,
+          signInWithPopup,
+          getPopup:function(){return releasePopup.popup();},
+          waitForRelayUser,
+        });
+      }else{
+        outcome=await startGoogleSignIn({
+          popupAuth:auth,
+          redirectAuth:googleRedirectAuth,
+          provider:googleProvider,
+          fromSignup,
+          useRedirect,
+          allowRedirectFallback:redirectFallbackAllowed(env),
+          storage,
+          signInWithPopup,
+          signInWithRedirect,
+          getPopup:function(){return releasePopup.popup();},
+        });
+      }
     }catch(error){
       outcome={status:"error", error};
     }finally{
       releasePopup();
+      const keepRelay=outcome&&outcome.status==="cancelled"&&outcome.whenUser;
+      if(!keepRelay){
+        stopRelay();
+        try{
+          const popup=releasePopup.popup();
+          if(popup&&popup.close)popup.close();
+        }catch(err){ /* The chooser can already be gone. */ }
+      }
     }
     function enterFromGoogle(user){
       setProfileForm(profileFromGoogleUser(user));
@@ -650,8 +714,11 @@ export default function Become(){
     }else if(outcome.whenUser){
       // The button can come back while Safari hides window.closed and the
       // person is still on the account picker. Home opens when they finish.
+      // The relay stays up until that account arrives, or until they leave.
       outcome.whenUser.then(function(user){
         if(user)enterFromGoogle(user);
+      }).finally(function(){
+        stopRelay();
       });
     }
     // "cancelled" is a closed popup or an unreadable window.closed. The button
