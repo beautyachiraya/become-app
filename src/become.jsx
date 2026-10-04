@@ -439,8 +439,8 @@ export default function Become(){
     let active=true;
     const storage=browserSessionStorage();
     // Read before getRedirectResult, which clears Firebase's pending flag.
-    // Phones sign in with a popup. An empty redirect result on those devices
-    // is a failed handoff or a leftover flag, not a reason to say sign-in didn't finish.
+    // iPhone Safari comes back through this full-page redirect. Android still
+    // uses a popup, so an empty result there is not "didn't finish".
     const redirectContext=redirectResultContext(readGoogleRedirectEnv(), {
       hadPendingRedirect:hadPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]"),
       navigationType:readPageNavigationType(),
@@ -602,8 +602,8 @@ export default function Become(){
     const useRedirect=prefersGoogleRedirect(env);
     const storage=browserSessionStorage();
     if(!useRedirect){
-      // Safari's popup return used to land on the red "didn't finish" line
-      // when an older redirect flag was still stored.
+      // A popup must not inherit a leftover redirect flag, or a failed handoff
+      // reloads onto the red "didn't finish" line.
       clearGoogleRedirectIntent(storage);
       clearPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]");
     }
