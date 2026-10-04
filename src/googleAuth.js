@@ -1,4 +1,9 @@
-/** Google sign-in helpers. Desktop and phone browsers use a popup. In-app browsers redirect. */
+/**
+ * Google sign-in helpers.
+ * Desktop and Android browsers use a popup. iPhone Safari uses a full-page
+ * redirect, because a popup cannot bring the account back (see prefersGoogleRedirect).
+ * In-app browsers and the home-screen icon also redirect.
+ */
 
 export const FIREBASE_AUTH_DOMAIN = "become-app-dde78.firebaseapp.com";
 
@@ -62,22 +67,36 @@ function isStandaloneApp(source) {
 }
 
 /**
- * Full-page redirect only where a popup cannot report back.
+ * Full-page redirect where a popup cannot bring the account back.
  *
- * iPhone Safari and Chrome used to redirect. Google does finish, but the
- * credential is left in sessionStorage on become-app-dde78.firebaseapp.com.
- * The Vercel page can only read that through a third-party frame, which iOS
- * partitions, so getRedirectResult comes back empty and the login screen says
- * sign-in didn't finish. A popup hands the credential to this page directly.
- * authDomain stays on the Firebase host: the Vercel /__/auth/handler address
- * is not an authorized Google redirect URI.
+ * The Firebase handler on become-app-dde78.firebaseapp.com can give a popup
+ * account to this page only through window.opener. iPhone Safari clears that
+ * link when the popup follows Google across origins and comes back, even if
+ * this page never assigns an address onto the popup. With the link gone, the
+ * account stays on the Firebase host and the person is not signed in.
+ * Opening the popup, or closing it without picking an account, can still
+ * look fine. That is not a finished sign-in.
+ *
+ * A full-page redirect does not use window.opener. authDomain stays on the
+ * Firebase host: https://become-app-rho.vercel.app/__/auth/handler is not an
+ * authorized Google redirect URI, so the Vercel host cannot be authDomain.
  */
 export function prefersGoogleRedirect(env) {
   const source = env || {};
   const userAgent = source.userAgent || "";
   if (isInAppBrowser(userAgent)) return true;
   if (isStandaloneApp(source)) return true;
+  if (isIOSDevice(source)) return true;
   return false;
+}
+
+/**
+ * The handler delivers a popup account only when window.opener is still this page.
+ * A missing opener means the account never arrives, so this returns null.
+ */
+export function userFromPopupOpener(opener, user) {
+  if (!opener || !user) return null;
+  return user;
 }
 
 /** Same-origin page the phone popup loads first, then leaves for the Firebase handler. */
@@ -169,9 +188,9 @@ noopPopupRelease.popup = function() { return null; };
  * address onto the popup, including a same-origin hash. After the person
  * picks an account, Google sends that window back to the Firebase handler.
  * The handler can hand the account to Become only through window.opener.
- * With the link gone, the account stays on the Firebase host and the login
- * screen says sign-in didn't finish. The start page reads this and leaves
- * for the handler on its own, which keeps the opener.
+ * Letting the start page leave on its own avoids one Safari bug (the parent
+ * assigning the address). It does not survive the later hop to Google on
+ * iPhone, so iPhone does not use this popup.
  */
 function publishHandlerUrl(popup, origin, handler) {
   if (!popup || !handler || !origin) return false;
@@ -199,9 +218,9 @@ function publishHandlerUrl(popup, origin, handler) {
  * popup, hand it the handler address and let that window navigate itself.
  *
  * The parent must not assign any URL onto the popup (location.href or
- * replace), including a same-origin hash. Safari drops window.opener when
- * the login page moves that window. The start page reads the handler
- * address and opens it itself.
+ * replace), including a same-origin hash. That assignment also drops
+ * window.opener. It is not enough on iPhone Safari: the popup's own hop to
+ * Google drops opener too, which is why iPhone does not use this path.
  *
  * Desktop does not need that head start, but it still wraps `window.open` so
  * we can see the popup Firebase opens. Google’s account page logs a
@@ -396,18 +415,20 @@ export function userFromFinishedPick(outcome) {
 
 /**
  * Page-load context for getRedirectResult.
- * An empty result on a phone is not a failed redirect: the account comes
- * back through the popup. Calling that "didn't finish" is the red banner.
+ * Android still signs in with a popup, so an empty result there is not a
+ * failed full-page return. iPhone Safari uses a real redirect: a user in
+ * that result is Home, and backing out without an account is not the red line.
  */
 export function redirectResultContext(env, details) {
   const source = env || {};
   const extra = details || {};
-  const phone = isIOSDevice(source) || /Android/i.test(source.userAgent || "");
+  const androidPopup = !prefersGoogleRedirect(source)
+    && /Android/i.test(source.userAgent || "");
   return {
     hadPendingRedirect: extra.hadPendingRedirect,
     navigationType: extra.navigationType || "",
     restoredFromCache: !!extra.restoredFromCache,
-    popupReturn: phone || !!extra.popupReturn,
+    popupReturn: !!extra.popupReturn || androidPopup,
   };
 }
 
@@ -455,7 +476,7 @@ export function readPageNavigationType(performanceObj) {
  */
 export function isAbandonedGoogleRedirect(context) {
   if (!context) return false;
-  // Phones use a popup. An empty getRedirectResult there is a failed handoff
+  // Android uses a popup. An empty getRedirectResult there is a failed handoff
   // or a leftover flag, not a redirect that should show "didn't finish".
   if (context.popupReturn) return true;
   if (context.restoredFromCache) return true;
@@ -556,9 +577,10 @@ export function shouldFallbackToRedirect(error) {
 }
 
 /**
- * Popup on desktop and on iPhone/Android browsers. Redirect only where a popup
- * cannot report back. A blocked popup on a phone must not fall through to
- * redirect: that return is what shows "didn't finish".
+ * Popup on desktop and Android. Full-page redirect on iPhone Safari, because
+ * the popup cannot return an account once window.opener is gone. A blocked
+ * popup on Android must not fall through to redirect: that return is what
+ * shows "didn't finish".
  * Closing the popup, or COOP blocking `window.closed`, returns "cancelled"
  * with no error text. Pass `getPopup` from `beginGooglePopupGesture` so a
  * close is noticed even when Firebase’s own poll never settles.

@@ -37,6 +37,7 @@ import {
   immediateGoogleScreen,
   userFromFinishedPick,
   redirectResultContext,
+  userFromPopupOpener,
 } from "./googleAuth";
 
 function memoryStorage(initial) {
@@ -68,8 +69,8 @@ const IPHONE_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Ap
 const ANDROID_CHROME = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
 
 describe("prefersGoogleRedirect", () => {
-  it("uses a popup on iPhone Safari, Android Chrome, and a narrow desktop window", () => {
-    expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(false);
+  it("redirects on iPhone Safari and keeps a popup on Android and a narrow desktop window", () => {
+    expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(true);
     expect(prefersGoogleRedirect({ userAgent: ANDROID_CHROME })).toBe(false);
     expect(prefersGoogleRedirect({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -81,7 +82,7 @@ describe("prefersGoogleRedirect", () => {
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
       platform: "MacIntel",
       maxTouchPoints: 5,
-    })).toBe(false);
+    })).toBe(true);
   });
 
   it("keeps a popup on a wide desktop browser", () => {
@@ -98,7 +99,7 @@ describe("prefersGoogleRedirect", () => {
     })).toBe(false);
   });
 
-  it("still redirects from in-app browsers and an installed home-screen app", () => {
+  it("redirects from a normal iPhone tab, in-app browsers, and an installed home-screen app", () => {
     expect(prefersGoogleRedirect({
       userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 320.0.0.0.0",
     })).toBe(true);
@@ -109,13 +110,13 @@ describe("prefersGoogleRedirect", () => {
     expect(prefersGoogleRedirect({
       userAgent: IPHONE_SAFARI,
       standalone: false,
-    })).toBe(false);
+    })).toBe(true);
   });
 });
 
 describe("shouldPrimeGooglePopup", () => {
   it("opens the window during the tap on phones that use a popup", () => {
-    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(true);
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(false);
     expect(shouldPrimeGooglePopup({ userAgent: ANDROID_CHROME })).toBe(true);
     expect(shouldPrimeGooglePopup({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -333,15 +334,9 @@ describe("beginGooglePopupGesture", () => {
       origin
     );
     expect(popup.focus).toHaveBeenCalled();
-    // The Firebase handler can hand the account back only when opener is still
-    // the login page. Parent location assignment is what used to clear it.
-    expect(popup.opener).toBeTruthy();
-    const delivered = popup.opener ? { displayName: "Achiraya", email: "a@example.com" } : null;
-    expect(delivered).toEqual({ displayName: "Achiraya", email: "a@example.com" });
-    expect(immediateGoogleScreen({ status: "success", user: delivered }).message).not.toBe(
-      GOOGLE_REDIRECT_INCOMPLETE
-    );
-    expect(immediateGoogleScreen({ status: "success", user: delivered }).screen).toBe("app");
+    // Not assigning from the parent keeps opener only until the popup itself
+    // leaves for Google. That later hop is what iPhone Safari actually does.
+    expect(popup.opener).toEqual({ page: "app" });
     win.open("https://other.example/", "_blank");
     expect(nativeOpen).toHaveBeenLastCalledWith("https://other.example/", "_blank");
     release();
@@ -412,6 +407,55 @@ describe("beginGooglePopupGesture", () => {
     release();
     expect(popup.close).not.toHaveBeenCalled();
     expect(win.open).toBe(nativeOpen);
+  });
+});
+
+describe("iPhone Safari popup cannot return an account", () => {
+  const origin = "https://become-app-rho.vercel.app";
+  const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+  const account = { displayName: "Achiraya", email: "a@example.com" };
+
+  it("drops the account when the popup follows Google, even if the login page never assigns a URL", () => {
+    const popup = {
+      opener: { page: "login" },
+      location: {
+        href: origin + GOOGLE_AUTH_START_PATH,
+        replace(url) {
+          const next = new URL(url);
+          // iPhone Safari clears window.opener on this cross-origin hop.
+          // The login page is not the one assigning the address.
+          if (next.origin !== origin) this.owner.opener = null;
+          this.href = url;
+        },
+      },
+    };
+    popup.location.owner = popup;
+
+    expect(isFirebaseAuthHandlerUrl(handler)).toBe(true);
+    popup.location.replace(handler);
+
+    expect(popup.location.href).toBe(handler);
+    expect(popup.opener).toBeNull();
+    expect(userFromPopupOpener(popup.opener, account)).toBeNull();
+    expect(immediateGoogleScreen({ status: "success", user: userFromPopupOpener(popup.opener, account) }).screen).toBe("login");
+    expect(immediateGoogleScreen({ status: "cancelled" })).toEqual({ screen: "login", message: "" });
+    expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(true);
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(false);
+  });
+
+  it("still returns the account on desktop, where the popup opener stays", () => {
+    const desktop = {
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      platform: "MacIntel",
+      maxTouchPoints: 0,
+    };
+    expect(prefersGoogleRedirect(desktop)).toBe(false);
+    expect(userFromPopupOpener({ page: "login" }, account)).toBe(account);
+    expect(immediateGoogleScreen({ status: "success", user: account })).toEqual({
+      screen: "app",
+      message: "",
+      user: account,
+    });
   });
 });
 
@@ -632,29 +676,36 @@ describe("googleRedirectOutcome", () => {
     }).message).toBe(GOOGLE_REDIRECT_INCOMPLETE);
   });
 
-  it("does not paint didn't finish after a real iPhone account pick", () => {
+  it("lands on Home when iPhone Safari's redirect brings the account back", () => {
     const user = { displayName: "Achiraya", email: "a@example.com" };
     const iphone = redirectResultContext(
       { userAgent: IPHONE_SAFARI },
       { hadPendingRedirect: true, navigationType: "navigate" }
     );
-    // A normal Safari tab, a home-screen icon, and an iPhone that asks for the
-    // desktop site all come back through the popup. An empty redirect result
-    // there is not the red line. A picked account is Home.
-    expect(iphone.popupReturn).toBe(true);
+    // A normal Safari tab is a real redirect, not a popup return. The picked
+    // account is Home. Backing out, or restoring the page from cache, is not
+    // the red line.
+    expect(iphone.popupReturn).toBe(false);
     expect(googleRedirectOutcome({ user }, "login", iphone)).toEqual({
       status: "success",
       fromSignup: false,
       profile: { name: "Achiraya", email: "a@example.com", phone: "" },
     });
-    expect(googleRedirectOutcome(null, "login", iphone)).toEqual({
-      status: "abandoned",
-      fromSignup: false,
-    });
+    // A forward return with no account is a real miss, not a closed popup.
+    expect(googleRedirectOutcome(null, "login", iphone).message).toBe(GOOGLE_REDIRECT_INCOMPLETE);
+    expect(googleRedirectOutcome(null, "login", {
+      hadPendingRedirect: true,
+      navigationType: "back_forward",
+    })).toEqual({ status: "abandoned", fromSignup: false });
+    expect(googleRedirectOutcome(null, "login", {
+      hadPendingRedirect: true,
+      navigationType: "back_forward",
+      restoredFromCache: true,
+    }).status).toBe("abandoned");
     expect(redirectResultContext(
       { userAgent: IPHONE_SAFARI, standalone: true },
       { hadPendingRedirect: true, navigationType: "navigate" }
-    ).popupReturn).toBe(true);
+    ).popupReturn).toBe(false);
     expect(redirectResultContext(
       {
         userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
@@ -662,7 +713,7 @@ describe("googleRedirectOutcome", () => {
         maxTouchPoints: 5,
       },
       { hadPendingRedirect: true, navigationType: "navigate" }
-    ).popupReturn).toBe(true);
+    ).popupReturn).toBe(false);
 
     const desktop = redirectResultContext(
       {
@@ -725,23 +776,53 @@ describe("startGoogleSignIn", () => {
     expect(peekGoogleRedirectIntent(storage)).toBe("login");
   });
 
-  it("clears a leftover redirect flag before the iPhone Safari popup", async () => {
+  it("sends iPhone Safari through redirect and does not open a popup", async () => {
     const storage = memoryStorage();
-    rememberGoogleRedirectIntent(storage, false);
-    const user = { displayName: "A", email: "a@b.com" };
+    const env = { userAgent: IPHONE_SAFARI };
+    expect(prefersGoogleRedirect(env)).toBe(true);
+    expect(shouldPrimeGooglePopup(env)).toBe(false);
+    const signInWithPopup = jest.fn();
+    const signInWithRedirect = jest.fn(() => Promise.resolve());
     const outcome = await startGoogleSignIn({
       popupAuth,
       redirectAuth,
       provider,
       fromSignup: false,
-      useRedirect: false,
-      allowRedirectFallback: false,
+      useRedirect: prefersGoogleRedirect(env),
+      allowRedirectFallback: redirectFallbackAllowed(env),
       storage,
-      signInWithPopup: jest.fn(() => Promise.resolve({ user })),
-      signInWithRedirect: jest.fn(),
+      signInWithPopup,
+      signInWithRedirect,
     });
-    expect(outcome).toEqual({ status: "success", user });
-    expect(peekGoogleRedirectIntent(storage)).toBe("");
+    expect(outcome).toEqual({ status: "redirecting" });
+    expect(signInWithPopup).not.toHaveBeenCalled();
+    expect(signInWithRedirect).toHaveBeenCalledWith(redirectAuth, provider);
+    expect(peekGoogleRedirectIntent(storage)).toBe("login");
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    const returned = googleRedirectOutcome({ user }, "login", redirectResultContext(
+      env,
+      { hadPendingRedirect: true, navigationType: "navigate" }
+    ));
+    expect(returned).toEqual({
+      status: "success",
+      fromSignup: false,
+      profile: { name: "Achiraya", email: "a@example.com", phone: "" },
+    });
+    expect(returned.message).toBeUndefined();
+  });
+
+  it("does not show the red line when iPhone Safari leaves Google without an account", async () => {
+    const storage = memoryStorage();
+    rememberGoogleRedirectIntent(storage, false);
+    const context = redirectResultContext(
+      { userAgent: IPHONE_SAFARI },
+      { hadPendingRedirect: true, navigationType: "back_forward" }
+    );
+    expect(googleRedirectOutcome(null, takeGoogleRedirectIntent(storage), context)).toEqual({
+      status: "abandoned",
+      fromSignup: false,
+    });
+    expect(immediateGoogleScreen({ status: "cancelled" })).toEqual({ screen: "login", message: "" });
   });
 
   it("uses a popup on desktop and returns the Google user", async () => {
