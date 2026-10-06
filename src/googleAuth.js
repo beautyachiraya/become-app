@@ -1,8 +1,11 @@
 /**
  * Google sign-in helpers.
- * Desktop and Android browsers use a popup. iPhone Safari uses a full-page
- * redirect, because a popup cannot bring the account back (see prefersGoogleRedirect).
- * In-app browsers and the home-screen icon also redirect.
+ * Desktop and Android browsers use a popup. A normal iPhone Safari tab also
+ * uses a popup, plus a second window that never visits Google (see
+ * prefersGoogleRelay). That window can read the account the Firebase handler
+ * stores when Safari drops window.opener. A full-page redirect cannot: the
+ * account stays in the Firebase host's storage, and the return looks empty.
+ * In-app browsers and the home-screen icon still redirect.
  */
 
 export const FIREBASE_AUTH_DOMAIN = "become-app-dde78.firebaseapp.com";
@@ -67,27 +70,40 @@ function isStandaloneApp(source) {
 }
 
 /**
- * Full-page redirect where a popup cannot bring the account back.
+ * Full-page redirect only where a second window cannot bring the account back.
  *
  * The Firebase handler on become-app-dde78.firebaseapp.com can give a popup
- * account to this page only through window.opener. iPhone Safari clears that
- * link when the popup follows Google across origins and comes back, even if
- * this page never assigns an address onto the popup. With the link gone, the
- * account stays on the Firebase host and the person is not signed in.
- * Opening the popup, or closing it without picking an account, can still
- * look fine. That is not a finished sign-in.
+ * account to this page through window.opener. iPhone Safari clears that link
+ * when the popup follows Google. The handler then stores the account in
+ * localStorage on the Firebase host. A normal Safari tab opens a second
+ * window onto that host — one that never visits Google, so its opener stays
+ * — and that window hands the account back. See prefersGoogleRelay.
  *
- * A full-page redirect does not use window.opener. authDomain stays on the
- * Firebase host: https://become-app-rho.vercel.app/__/auth/handler is not an
- * authorized Google redirect URI, so the Vercel host cannot be authDomain.
+ * A full-page redirect stores the account in sessionStorage instead. The
+ * login page cannot see it: getRedirectResult asks an iframe, and iPhone
+ * Safari keeps that iframe's storage separate. The return has no user, and
+ * the login screen paints "didn't finish" even after a real account pick.
+ * authDomain stays on the Firebase host. Google rejects
+ * https://become-app-rho.vercel.app/__/auth/handler with redirect_uri_mismatch.
  */
 export function prefersGoogleRedirect(env) {
   const source = env || {};
   const userAgent = source.userAgent || "";
   if (isInAppBrowser(userAgent)) return true;
   if (isStandaloneApp(source)) return true;
-  if (isIOSDevice(source)) return true;
   return false;
+}
+
+/**
+ * A normal iPhone or iPad Safari tab. The account chooser is a popup. A
+ * second window on the Firebase host reads the stored account after Safari
+ * drops window.opener. In-app browsers and the home-screen icon cannot rely
+ * on that second window, so they still redirect.
+ */
+export function prefersGoogleRelay(env) {
+  const source = env || {};
+  if (prefersGoogleRedirect(source)) return false;
+  return isIOSDevice(source);
 }
 
 /**
@@ -101,6 +117,16 @@ export function userFromPopupOpener(opener, user) {
 
 /** Same-origin page the phone popup loads first, then leaves for the Firebase handler. */
 export const GOOGLE_AUTH_START_PATH = "/google-auth-start.html";
+
+/** Second window. It stays on the Firebase host and never follows Google. */
+export const GOOGLE_AUTH_RELAY_NAME = "become-google-relay";
+
+export const GOOGLE_AUTH_RELAY_FRAME_ID = "become-relay";
+
+/** Matches the firebase package this app loads. The helper reads this query. */
+export const GOOGLE_AUTH_RELAY_SDK_VERSION = "10.12.0";
+
+export const GOOGLE_AUTH_RELAY_ORIGIN = "https://" + FIREBASE_AUTH_DOMAIN;
 
 export const GOOGLE_POPUP_URL_KEY = "become.googleHandlerUrl";
 
@@ -180,6 +206,7 @@ export function takeStoredHandlerUrl(storage) {
 
 function noopPopupRelease() {}
 noopPopupRelease.popup = function() { return null; };
+noopPopupRelease.openRelay = function() { return null; };
 
 /**
  * Tell the already-open start page where Google lives, without moving it.
@@ -190,7 +217,7 @@ noopPopupRelease.popup = function() { return null; };
  * The handler can hand the account to Become only through window.opener.
  * Letting the start page leave on its own avoids one Safari bug (the parent
  * assigning the address). It does not survive the later hop to Google on
- * iPhone, so iPhone does not use this popup.
+ * iPhone. The relay window, which never visits Google, brings that account back.
  */
 function publishHandlerUrl(popup, origin, handler) {
   if (!popup || !handler || !origin) return false;
@@ -220,7 +247,7 @@ function publishHandlerUrl(popup, origin, handler) {
  * The parent must not assign any URL onto the popup (location.href or
  * replace), including a same-origin hash. That assignment also drops
  * window.opener. It is not enough on iPhone Safari: the popup's own hop to
- * Google drops opener too, which is why iPhone does not use this path.
+ * Google drops opener too. prefersGoogleRelay covers that hop.
  *
  * Desktop does not need that head start, but it still wraps `window.open` so
  * we can see the popup Firebase opens. Google’s account page logs a
@@ -275,6 +302,16 @@ export function beginGooglePopupGesture(win, prime) {
     }
   }
   release.popup = function() { return opened; };
+  // The relay must use the real window.open. The wrapper above is reserved
+  // for the Firebase handler, and calling it would steal the account chooser.
+  release.openRelay = function(url) {
+    if (!url) return null;
+    try {
+      return original.call(win, url, GOOGLE_AUTH_RELAY_NAME);
+    } catch (err) {
+      return null;
+    }
+  };
   return release;
 }
 
@@ -415,20 +452,22 @@ export function userFromFinishedPick(outcome) {
 
 /**
  * Page-load context for getRedirectResult.
- * Android still signs in with a popup, so an empty result there is not a
- * failed full-page return. iPhone Safari uses a real redirect: a user in
- * that result is Home, and backing out without an account is not the red line.
+ * Android, and a normal iPhone Safari tab, sign in with a popup. An empty
+ * result there is not "didn't finish" — including a leftover full-page
+ * return whose account never left the Firebase host. A user in the result
+ * is still Home. Backing out without an account is not the red line.
  */
 export function redirectResultContext(env, details) {
   const source = env || {};
   const extra = details || {};
-  const androidPopup = !prefersGoogleRedirect(source)
-    && /Android/i.test(source.userAgent || "");
+  const phonePopup = !prefersGoogleRedirect(source) && (
+    isIOSDevice(source) || /Android/i.test(source.userAgent || "")
+  );
   return {
     hadPendingRedirect: extra.hadPendingRedirect,
     navigationType: extra.navigationType || "",
     restoredFromCache: !!extra.restoredFromCache,
-    popupReturn: !!extra.popupReturn || androidPopup,
+    popupReturn: !!extra.popupReturn || phonePopup,
   };
 }
 
@@ -577,9 +616,9 @@ export function shouldFallbackToRedirect(error) {
 }
 
 /**
- * Popup on desktop and Android. Full-page redirect on iPhone Safari, because
- * the popup cannot return an account once window.opener is gone. A blocked
- * popup on Android must not fall through to redirect: that return is what
+ * Popup on desktop, Android, and a normal iPhone Safari tab. Full-page
+ * redirect only for in-app browsers and the home-screen icon. A blocked
+ * popup on a phone must not fall through to redirect: that return is what
  * shows "didn't finish".
  * Closing the popup, or COOP blocking `window.closed`, returns "cancelled"
  * with no error text. Pass `getPopup` from `beginGooglePopupGesture` so a
@@ -685,4 +724,272 @@ export async function adoptRedirectUser({
     signOut(redirectAuth).catch(() => {});
   }
   return (signedIn && signedIn.user) || redirectedUser;
+}
+
+/**
+ * Top-level Firebase auth iframe. `parent` is this page's origin, which has
+ * to be an authorized Firebase domain. The window name is not a data channel.
+ * iPhone Safari partitions an embedded iframe, so this has to be its own window.
+ */
+export function googleAuthRelayUrl({ apiKey, appName, parentOrigin, sdkVersion }) {
+  if (!apiKey || !parentOrigin) return "";
+  const params = new URLSearchParams();
+  params.set("apiKey", apiKey);
+  params.set("appName", appName || "[DEFAULT]");
+  params.set("v", sdkVersion || GOOGLE_AUTH_RELAY_SDK_VERSION);
+  params.set("parent", parentOrigin);
+  params.set("id", GOOGLE_AUTH_RELAY_FRAME_ID);
+  return GOOGLE_AUTH_RELAY_ORIGIN + "/__/auth/iframe?" + params.toString();
+}
+
+/** Gadgets RPC messages from the helper start with `!_` and then JSON. */
+export function parseRelayRpc(data) {
+  if (typeof data !== "string" || data.slice(0, 2) !== "!_") return null;
+  try {
+    const msg = JSON.parse(data.slice(2));
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) return null;
+    return msg;
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * The helper waits for this before it reads the account out of localStorage.
+ * The result has to be a one-element array whose status is ACK. A bare object
+ * leaves the helper on the empty "no account" event.
+ */
+export function relayAckMessage(msg) {
+  if (!msg || msg.c == null) return "";
+  return "!_" + JSON.stringify({
+    s: "__cb",
+    f: "..",
+    // The helper checks this reply against the parent channel, which is "..".
+    // Echoing the helper's own frame name never unblocks the stored account.
+    r: "..",
+    c: null,
+    a: [msg.c, [{ status: "ACK" }]],
+    g: false,
+  });
+}
+
+export function authEventFromRelayRpc(msg) {
+  if (!msg) return null;
+  const service = typeof msg.s === "string" ? msg.s : "";
+  if (service !== "authEvent" && !service.endsWith(":authEvent")) return null;
+  const payload = Array.isArray(msg.a) ? msg.a[0] : null;
+  const event = payload && payload.authEvent;
+  if (!event || typeof event !== "object") return null;
+  return event;
+}
+
+const QUIET_RELAY_ERROR_CODES = {
+  "auth/no-auth-event": true,
+  "auth/user-cancelled": true,
+  "auth/web-storage-unsupported": true,
+  "auth/popup-closed-by-user": true,
+};
+
+/**
+ * A picked account, or a real helper error.
+ * "No account yet" and a closed chooser are null so the login page stays quiet.
+ */
+export function accountFromRelayEvent(event) {
+  if (!event || event.type === "unknown") return null;
+  const code = event.error && event.error.code;
+  if (code && QUIET_RELAY_ERROR_CODES[code]) return null;
+  if (code) {
+    const error = new Error(event.error.message || "Google sign-in couldn't be finished. Please try again.");
+    error.code = code;
+    return { error };
+  }
+  if (event.type !== "signInViaPopup" && event.type !== "signInViaRedirect") return null;
+  if (!event.urlResponse || !event.sessionId) return null;
+  return { event };
+}
+
+/**
+ * One incoming message from the relay window.
+ * Returns the ACK to post back, and the account when this message is the pick.
+ * Messages from any other origin are ignored.
+ */
+export function relayReplyForMessage(event) {
+  if (!event || event.origin !== GOOGLE_AUTH_RELAY_ORIGIN) return null;
+  const msg = parseRelayRpc(event.data);
+  if (!msg || msg.c == null) return null;
+  return {
+    ack: relayAckMessage(msg),
+    targetOrigin: event.origin,
+    account: accountFromRelayEvent(authEventFromRelayRpc(msg)),
+  };
+}
+
+export function listenForGoogleRelay(win, onAccount) {
+  if (!win || typeof win.addEventListener !== "function") return function() {};
+  function onMessage(event) {
+    const reply = relayReplyForMessage(event);
+    if (!reply) return;
+    try {
+      if (reply.ack && event.source && typeof event.source.postMessage === "function") {
+        event.source.postMessage(reply.ack, reply.targetOrigin);
+      }
+    } catch (err) {
+      // The relay can close before the reply is delivered.
+    }
+    if (reply.account && onAccount) onAccount(reply.account);
+  }
+  win.addEventListener("message", onMessage);
+  return function stop() {
+    if (typeof win.removeEventListener === "function") {
+      win.removeEventListener("message", onMessage);
+    }
+  };
+}
+
+/** Body for identitytoolkit accounts:signInWithIdp. The code stays inside requestUri. */
+export function googleIdpSignInBody(event) {
+  const body = {
+    requestUri: event.urlResponse,
+    sessionId: event.sessionId,
+    returnSecureToken: true,
+    returnIdpCredential: true,
+  };
+  if (event.postBody) body.postBody = event.postBody;
+  if (event.tenantId) body.tenantId = event.tenantId;
+  return body;
+}
+
+/**
+ * Turn the account the relay delivered into the signed-in Firebase user.
+ * The handler never puts that account in the return URL. This is the same
+ * exchange Firebase runs after getRedirectResult, using the tokens the
+ * identity toolkit returns when returnIdpCredential is set.
+ */
+export async function userFromGoogleRelayEvent({
+  event,
+  apiKey,
+  auth,
+  fetchImpl,
+  signInWithCredential,
+  credentialFromTokens,
+}) {
+  const fetchFn = fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
+  if (!fetchFn || !apiKey || !event) {
+    const error = new Error("Google sign-in couldn't be finished. Please try again.");
+    error.code = "auth/missing-google-credential";
+    throw error;
+  }
+  const response = await fetchFn(
+    "https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=" + encodeURIComponent(apiKey),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(googleIdpSignInBody(event)),
+    }
+  );
+  let body = {};
+  try {
+    body = await response.json();
+  } catch (err) {
+    body = {};
+  }
+  if (!response.ok || !body || body.error) {
+    const message = (body && body.error && body.error.message)
+      || "Google sign-in couldn't be finished. Please try again.";
+    const error = new Error(message);
+    error.code = "auth/internal-error";
+    throw error;
+  }
+  const credential = credentialFromTokens(body.oauthIdToken || null, body.oauthAccessToken || null);
+  if (!credential) {
+    const error = new Error("Google sign-in couldn't be finished. Please try again.");
+    error.code = "auth/missing-google-credential";
+    throw error;
+  }
+  const signedIn = await signInWithCredential(auth, credential);
+  return (signedIn && signedIn.user) || null;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * Popup sign-in for a normal iPhone Safari tab, plus the relay window.
+ * `waitForRelayUser` resolves with the Firebase user once the second window
+ * has handed the picked account over. It stays pending when nobody picked.
+ * Closing the chooser with no account is "cancelled" and has no red line.
+ * This never starts a full-page redirect.
+ */
+export async function startIphoneGoogleSignIn({
+  popupAuth,
+  provider,
+  storage,
+  signInWithPopup,
+  getPopup,
+  readClosed,
+  intervalMs,
+  waitForRelayUser,
+  graceMs,
+}) {
+  clearGoogleRedirectIntent(storage);
+  const popupPromise = finishPopupSignIn({
+    signIn: () => signInWithPopup(popupAuth, provider),
+    getPopup,
+    readClosed,
+    intervalMs,
+  }).then((raced) => {
+    if (raced.status === "success") return { status: "success", user: raced.user };
+    if (raced.status === "cancelled") {
+      return { status: "cancelled", reason: raced.reason, whenUser: raced.whenUser };
+    }
+    if (quietPopupClose(raced.error)) return { status: "cancelled" };
+    return { status: "error", error: raced.error };
+  });
+  const relayPromise = (typeof waitForRelayUser === "function" ? Promise.resolve().then(() => waitForRelayUser()) : new Promise(() => {}))
+    .then((user) => (user ? { status: "success", user } : null))
+    .catch((error) => ({ status: "error", error }));
+
+  const first = await Promise.race([
+    popupPromise.then((outcome) => ({ from: "popup", outcome })),
+    relayPromise.then((outcome) => ({ from: "relay", outcome })),
+  ]);
+
+  if (first.from === "relay" && first.outcome && first.outcome.status === "success") {
+    return first.outcome;
+  }
+  if (first.from === "popup" && first.outcome.status === "success") {
+    return first.outcome;
+  }
+  if (first.from === "relay" && first.outcome && first.outcome.status === "error") {
+    return first.outcome;
+  }
+
+  const popupOutcome = first.from === "popup" ? first.outcome : await popupPromise;
+  // Safari hides window.closed while the account picker is open. The button
+  // can come back, and Home still opens when the relay delivers the account.
+  if (popupOutcome.status === "cancelled" && popupOutcome.reason === "unavailable") {
+    return {
+      status: "cancelled",
+      whenUser: relayPromise.then(
+        (outcome) => (outcome && outcome.status === "success" ? outcome.user || null : null),
+        () => null
+      ),
+    };
+  }
+  if (popupOutcome.status === "error") return popupOutcome;
+
+  const late = await Promise.race([
+    relayPromise,
+    delay(typeof graceMs === "number" ? graceMs : 2500).then(() => null),
+  ]);
+  if (late && late.status === "success" && late.user) return late;
+  if (late && late.status === "error") return late;
+  if (popupOutcome.status === "success") return popupOutcome;
+  if (popupOutcome.status === "cancelled") {
+    return { status: "cancelled" };
+  }
+  return popupOutcome;
 }

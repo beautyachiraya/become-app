@@ -5,6 +5,7 @@ import {
   GOOGLE_REDIRECT_INCOMPLETE,
   resolveAuthDomain,
   prefersGoogleRedirect,
+  prefersGoogleRelay,
   shouldPrimeGooglePopup,
   redirectFallbackAllowed,
   GOOGLE_AUTH_START_PATH,
@@ -38,6 +39,16 @@ import {
   userFromFinishedPick,
   redirectResultContext,
   userFromPopupOpener,
+  GOOGLE_AUTH_RELAY_NAME,
+  GOOGLE_AUTH_RELAY_ORIGIN,
+  googleAuthRelayUrl,
+  parseRelayRpc,
+  relayAckMessage,
+  relayReplyForMessage,
+  googleIdpSignInBody,
+  userFromGoogleRelayEvent,
+  startIphoneGoogleSignIn,
+  listenForGoogleRelay,
 } from "./googleAuth";
 
 function memoryStorage(initial) {
@@ -69,9 +80,11 @@ const IPHONE_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Ap
 const ANDROID_CHROME = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
 
 describe("prefersGoogleRedirect", () => {
-  it("redirects on iPhone Safari and keeps a popup on Android and a narrow desktop window", () => {
-    expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(true);
+  it("keeps a popup on iPhone Safari, Android, and a narrow desktop window", () => {
+    expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(false);
+    expect(prefersGoogleRelay({ userAgent: IPHONE_SAFARI })).toBe(true);
     expect(prefersGoogleRedirect({ userAgent: ANDROID_CHROME })).toBe(false);
+    expect(prefersGoogleRelay({ userAgent: ANDROID_CHROME })).toBe(false);
     expect(prefersGoogleRedirect({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       platform: "MacIntel",
@@ -79,6 +92,11 @@ describe("prefersGoogleRedirect", () => {
       narrowViewport: true,
     })).toBe(false);
     expect(prefersGoogleRedirect({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+      platform: "MacIntel",
+      maxTouchPoints: 5,
+    })).toBe(false);
+    expect(prefersGoogleRelay({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
       platform: "MacIntel",
       maxTouchPoints: 5,
@@ -99,15 +117,26 @@ describe("prefersGoogleRedirect", () => {
     })).toBe(false);
   });
 
-  it("redirects from a normal iPhone tab, in-app browsers, and an installed home-screen app", () => {
+  it("redirects from in-app browsers and an installed home-screen app, not a normal iPhone tab", () => {
     expect(prefersGoogleRedirect({
       userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 320.0.0.0.0",
     })).toBe(true);
+    expect(prefersGoogleRelay({
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 320.0.0.0.0",
+    })).toBe(false);
     expect(prefersGoogleRedirect({
       userAgent: IPHONE_SAFARI,
       standalone: true,
     })).toBe(true);
+    expect(prefersGoogleRelay({
+      userAgent: IPHONE_SAFARI,
+      standalone: true,
+    })).toBe(false);
     expect(prefersGoogleRedirect({
+      userAgent: IPHONE_SAFARI,
+      standalone: false,
+    })).toBe(false);
+    expect(prefersGoogleRelay({
       userAgent: IPHONE_SAFARI,
       standalone: false,
     })).toBe(true);
@@ -116,7 +145,7 @@ describe("prefersGoogleRedirect", () => {
 
 describe("shouldPrimeGooglePopup", () => {
   it("opens the window during the tap on phones that use a popup", () => {
-    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(false);
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(true);
     expect(shouldPrimeGooglePopup({ userAgent: ANDROID_CHROME })).toBe(true);
     expect(shouldPrimeGooglePopup({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -408,6 +437,29 @@ describe("beginGooglePopupGesture", () => {
     expect(popup.close).not.toHaveBeenCalled();
     expect(win.open).toBe(nativeOpen);
   });
+
+  it("opens the iPhone relay with the real window.open and leaves the account chooser in place", () => {
+    const origin = "https://become-app-rho.vercel.app";
+    const chooser = popupWindow();
+    const relay = popupWindow();
+    const nativeOpen = jest.fn()
+      .mockReturnValueOnce(chooser)
+      .mockReturnValueOnce(relay);
+    const win = { location: { origin }, open: nativeOpen };
+    const release = beginGooglePopupGesture(win, true);
+    const relayUrl = googleAuthRelayUrl({
+      apiKey: "api-key",
+      parentOrigin: origin,
+    });
+    expect(release.openRelay(relayUrl)).toBe(relay);
+    expect(nativeOpen).toHaveBeenLastCalledWith(relayUrl, GOOGLE_AUTH_RELAY_NAME);
+    const handler = "https://become-app-dde78.firebaseapp.com/__/auth/handler?authType=signInViaPopup";
+    expect(win.open(handler, "firebase")).toBe(chooser);
+    expect(chooser[GOOGLE_POPUP_URL_KEY]).toBe(handler);
+    expect(release.popup()).toBe(chooser);
+    release();
+    expect(chooser.close).not.toHaveBeenCalled();
+  });
 });
 
 describe("iPhone Safari popup cannot return an account", () => {
@@ -439,8 +491,11 @@ describe("iPhone Safari popup cannot return an account", () => {
     expect(userFromPopupOpener(popup.opener, account)).toBeNull();
     expect(immediateGoogleScreen({ status: "success", user: userFromPopupOpener(popup.opener, account) }).screen).toBe("login");
     expect(immediateGoogleScreen({ status: "cancelled" })).toEqual({ screen: "login", message: "" });
-    expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(true);
-    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(false);
+    // The lost opener is why the popup alone cannot finish. A normal iPhone
+    // tab still uses that popup, and a second window reads the stored account.
+    expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(false);
+    expect(prefersGoogleRelay({ userAgent: IPHONE_SAFARI })).toBe(true);
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(true);
   });
 
   it("still returns the account on desktop, where the popup opener stays", () => {
@@ -676,23 +731,27 @@ describe("googleRedirectOutcome", () => {
     }).message).toBe(GOOGLE_REDIRECT_INCOMPLETE);
   });
 
-  it("lands on Home when iPhone Safari's redirect brings the account back", () => {
+  it("does not paint didn't finish when iPhone Safari's redirect comes back empty", () => {
     const user = { displayName: "Achiraya", email: "a@example.com" };
     const iphone = redirectResultContext(
       { userAgent: IPHONE_SAFARI },
       { hadPendingRedirect: true, navigationType: "navigate" }
     );
-    // A normal Safari tab is a real redirect, not a popup return. The picked
-    // account is Home. Backing out, or restoring the page from cache, is not
-    // the red line.
-    expect(iphone.popupReturn).toBe(false);
+    // A normal Safari tab no longer uses this redirect. An empty forward
+    // return is the partitioned-iframe result from the previous version:
+    // there is no user for the banner to describe, and it must stay quiet.
+    // A user in the result is still Home.
+    expect(iphone.popupReturn).toBe(true);
     expect(googleRedirectOutcome({ user }, "login", iphone)).toEqual({
       status: "success",
       fromSignup: false,
       profile: { name: "Achiraya", email: "a@example.com", phone: "" },
     });
-    // A forward return with no account is a real miss, not a closed popup.
-    expect(googleRedirectOutcome(null, "login", iphone).message).toBe(GOOGLE_REDIRECT_INCOMPLETE);
+    expect(googleRedirectOutcome(null, "login", iphone)).toEqual({
+      status: "abandoned",
+      fromSignup: false,
+    });
+    expect(googleRedirectOutcome(null, "login", iphone).message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
     expect(googleRedirectOutcome(null, "login", {
       hadPendingRedirect: true,
       navigationType: "back_forward",
@@ -706,6 +765,10 @@ describe("googleRedirectOutcome", () => {
       { userAgent: IPHONE_SAFARI, standalone: true },
       { hadPendingRedirect: true, navigationType: "navigate" }
     ).popupReturn).toBe(false);
+    expect(googleRedirectOutcome(null, "login", redirectResultContext(
+      { userAgent: IPHONE_SAFARI, standalone: true },
+      { hadPendingRedirect: true, navigationType: "navigate" }
+    )).message).toBe(GOOGLE_REDIRECT_INCOMPLETE);
     expect(redirectResultContext(
       {
         userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
@@ -713,7 +776,7 @@ describe("googleRedirectOutcome", () => {
         maxTouchPoints: 5,
       },
       { hadPendingRedirect: true, navigationType: "navigate" }
-    ).popupReturn).toBe(false);
+    ).popupReturn).toBe(true);
 
     const desktop = redirectResultContext(
       {
@@ -776,12 +839,14 @@ describe("startGoogleSignIn", () => {
     expect(peekGoogleRedirectIntent(storage)).toBe("login");
   });
 
-  it("sends iPhone Safari through redirect and does not open a popup", async () => {
+  it("sends iPhone Safari through the popup and does not start a redirect", async () => {
     const storage = memoryStorage();
     const env = { userAgent: IPHONE_SAFARI };
-    expect(prefersGoogleRedirect(env)).toBe(true);
-    expect(shouldPrimeGooglePopup(env)).toBe(false);
-    const signInWithPopup = jest.fn();
+    expect(prefersGoogleRedirect(env)).toBe(false);
+    expect(prefersGoogleRelay(env)).toBe(true);
+    expect(shouldPrimeGooglePopup(env)).toBe(true);
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    const signInWithPopup = jest.fn(() => Promise.resolve({ user }));
     const signInWithRedirect = jest.fn(() => Promise.resolve());
     const outcome = await startGoogleSignIn({
       popupAuth,
@@ -794,21 +859,16 @@ describe("startGoogleSignIn", () => {
       signInWithPopup,
       signInWithRedirect,
     });
-    expect(outcome).toEqual({ status: "redirecting" });
-    expect(signInWithPopup).not.toHaveBeenCalled();
-    expect(signInWithRedirect).toHaveBeenCalledWith(redirectAuth, provider);
-    expect(peekGoogleRedirectIntent(storage)).toBe("login");
-    const user = { displayName: "Achiraya", email: "a@example.com" };
-    const returned = googleRedirectOutcome({ user }, "login", redirectResultContext(
+    expect(outcome).toEqual({ status: "success", user });
+    expect(signInWithPopup).toHaveBeenCalledWith(popupAuth, provider);
+    expect(signInWithRedirect).not.toHaveBeenCalled();
+    expect(peekGoogleRedirectIntent(storage)).toBe("");
+    const returned = googleRedirectOutcome(null, "login", redirectResultContext(
       env,
       { hadPendingRedirect: true, navigationType: "navigate" }
     ));
-    expect(returned).toEqual({
-      status: "success",
-      fromSignup: false,
-      profile: { name: "Achiraya", email: "a@example.com", phone: "" },
-    });
-    expect(returned.message).toBeUndefined();
+    expect(returned).toEqual({ status: "abandoned", fromSignup: false });
+    expect(returned.message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
   });
 
   it("does not show the red line when iPhone Safari leaves Google without an account", async () => {
@@ -1132,5 +1192,260 @@ describe("adoptRedirectUser", () => {
       credentialFromResult: () => null,
       signInWithCredential: jest.fn(),
     })).rejects.toMatchObject({ code: "auth/missing-google-credential" });
+  });
+});
+
+describe("iPhone Google relay", () => {
+  const origin = "https://become-app-rho.vercel.app";
+  const apiKey = "AIzaSyBnN0Skhq_y2azpES-ccv_yv9voxa2JyXg";
+  const handlerUrl = "https://become-app-dde78.firebaseapp.com/__/auth/handler?apiKey=" + apiKey + "&code=fakecode";
+  const picked = {
+    type: "signInViaPopup",
+    eventId: "evt-popup",
+    urlResponse: handlerUrl,
+    sessionId: "sess-popup",
+    postBody: "providerId=google.com",
+    tenantId: null,
+    error: null,
+  };
+
+  function rpc(service, callId, arg) {
+    return "!_" + JSON.stringify({
+      s: service,
+      f: GOOGLE_AUTH_RELAY_NAME,
+      r: "..",
+      c: callId,
+      a: [arg],
+      g: false,
+    });
+  }
+
+  it("builds a top-level helper URL whose parent is this page", () => {
+    const url = new URL(googleAuthRelayUrl({ apiKey, parentOrigin: origin }));
+    expect(url.origin).toBe(GOOGLE_AUTH_RELAY_ORIGIN);
+    expect(url.pathname).toBe("/__/auth/iframe");
+    expect(url.searchParams.get("apiKey")).toBe(apiKey);
+    expect(url.searchParams.get("appName")).toBe("[DEFAULT]");
+    expect(url.searchParams.get("v")).toBe("10.12.0");
+    expect(url.searchParams.get("parent")).toBe(origin);
+    expect(url.searchParams.get("id")).toBe("become-relay");
+    expect(googleAuthRelayUrl({ apiKey: "", parentOrigin: origin })).toBe("");
+  });
+
+  it("acks the helper and keeps an empty event off the red line", () => {
+    const empty = rpc("..:become-relay:authEvent", 2, {
+      type: "authEvent",
+      authEvent: {
+        type: "unknown",
+        eventId: null,
+        urlResponse: null,
+        sessionId: null,
+        postBody: null,
+        tenantId: null,
+        error: { code: "auth/no-auth-event", message: "An internal error has occurred." },
+      },
+    });
+    const reply = relayReplyForMessage({
+      origin: GOOGLE_AUTH_RELAY_ORIGIN,
+      data: empty,
+    });
+    expect(reply.account).toBeNull();
+    expect(parseRelayRpc(reply.ack)).toEqual({
+      s: "__cb",
+      f: "..",
+      r: "..",
+      c: null,
+      a: [2, [{ status: "ACK" }]],
+      g: false,
+    });
+    expect(relayAckMessage({ c: null })).toBe("");
+    expect(relayReplyForMessage({ origin: "https://evil.example", data: empty })).toBeNull();
+    expect(relayReplyForMessage({ origin: GOOGLE_AUTH_RELAY_ORIGIN, data: "hello" })).toBeNull();
+    expect(relayReplyForMessage({
+      origin: GOOGLE_AUTH_RELAY_ORIGIN,
+      data: rpc("_g_rpcReady", 1, null),
+    }).account).toBeNull();
+  });
+
+  it("reads a picked account and ignores a closed chooser", () => {
+    const reply = relayReplyForMessage({
+      origin: GOOGLE_AUTH_RELAY_ORIGIN,
+      data: rpc("/become-relay::authEvent", 3, { type: "authEvent", authEvent: picked }),
+    });
+    expect(reply.account.event.urlResponse).toBe(handlerUrl);
+    expect(reply.account.event.sessionId).toBe("sess-popup");
+    const cancelled = relayReplyForMessage({
+      origin: GOOGLE_AUTH_RELAY_ORIGIN,
+      data: rpc("authEvent", 4, {
+        type: "authEvent",
+        authEvent: {
+          type: "unknown",
+          error: { code: "auth/user-cancelled", message: "The popup has been closed by the user." },
+        },
+      }),
+    });
+    expect(cancelled.account).toBeNull();
+    expect(cancelled.ack).toContain("__cb");
+  });
+
+  it("posts the ack back to the relay window", () => {
+    const source = { postMessage: jest.fn() };
+    const seen = [];
+    const listeners = new Set();
+    const win = {
+      addEventListener(_type, fn) { listeners.add(fn); },
+      removeEventListener(_type, fn) { listeners.delete(fn); },
+    };
+    function emit(event) {
+      [...listeners].forEach((fn) => fn(event));
+    }
+    const message = {
+      origin: GOOGLE_AUTH_RELAY_ORIGIN,
+      data: rpc("authEvent", 3, { type: "authEvent", authEvent: picked }),
+      source,
+    };
+    const stop = listenForGoogleRelay(win, (account) => seen.push(account));
+    emit(message);
+    expect(source.postMessage).toHaveBeenCalledWith(
+      relayAckMessage(parseRelayRpc(message.data)),
+      GOOGLE_AUTH_RELAY_ORIGIN
+    );
+    expect(seen).toHaveLength(1);
+    stop();
+    emit(message);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("finishes sign-in from the relay account without the incomplete banner", async () => {
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    const fetchImpl = jest.fn(async (url, init) => {
+      expect(url).toBe("https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=" + encodeURIComponent(apiKey));
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toEqual(googleIdpSignInBody(picked));
+      expect(JSON.parse(init.body).requestUri).toBe(handlerUrl);
+      return {
+        ok: true,
+        json: async () => ({ oauthIdToken: "id-token", oauthAccessToken: "access-token" }),
+      };
+    });
+    const credential = { providerId: "google.com" };
+    const signInWithCredential = jest.fn(async () => ({ user }));
+    const signedIn = await userFromGoogleRelayEvent({
+      event: picked,
+      apiKey,
+      auth: { name: "auth" },
+      fetchImpl,
+      signInWithCredential,
+      credentialFromTokens: (idToken, accessToken) => {
+        expect(idToken).toBe("id-token");
+        expect(accessToken).toBe("access-token");
+        return credential;
+      },
+    });
+    expect(signedIn).toBe(user);
+    expect(signInWithCredential).toHaveBeenCalledWith({ name: "auth" }, credential);
+    expect(immediateGoogleScreen({ status: "success", user: signedIn })).toEqual({
+      screen: "app",
+      message: "",
+      user,
+    });
+
+    const failed = {
+      ok: false,
+      json: async () => ({ error: { message: "INVALID_IDP_RESPONSE" } }),
+    };
+    await expect(userFromGoogleRelayEvent({
+      event: picked,
+      apiKey,
+      auth: { name: "auth" },
+      fetchImpl: async () => failed,
+      signInWithCredential,
+      credentialFromTokens: () => credential,
+    })).rejects.toMatchObject({ code: "auth/internal-error" });
+
+    await expect(userFromGoogleRelayEvent({
+      event: picked,
+      apiKey,
+      auth: { name: "auth" },
+      fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
+      signInWithCredential,
+      credentialFromTokens: () => null,
+    })).rejects.toMatchObject({ code: "auth/missing-google-credential" });
+  });
+
+  it("lands on Home when the relay brings the account back after the popup looks closed", async () => {
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    let deliver;
+    const outcomePromise = startIphoneGoogleSignIn({
+      popupAuth: { name: "popup" },
+      provider: { providerId: "google.com" },
+      storage: memoryStorage(),
+      signInWithPopup: () => new Promise(() => {}),
+      getPopup: () => ({ closed: true }),
+      waitForRelayUser: () => new Promise((resolve) => { deliver = resolve; }),
+      graceMs: 500,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(typeof deliver).toBe("function");
+    deliver(user);
+    await expect(outcomePromise).resolves.toEqual({ status: "success", user });
+    await expect(outcomePromise.then((outcome) => immediateGoogleScreen(outcome).screen)).resolves.toBe("app");
+  });
+
+  it("returns the relay user when the popup never settles", async () => {
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    const signInWithRedirect = jest.fn();
+    const outcome = await startIphoneGoogleSignIn({
+      popupAuth: { name: "popup" },
+      provider: { providerId: "google.com" },
+      storage: memoryStorage(),
+      signInWithPopup: () => new Promise(() => {}),
+      getPopup: () => ({ closed: false }),
+      intervalMs: 5000,
+      waitForRelayUser: () => Promise.resolve(user),
+      graceMs: 20,
+    });
+    expect(outcome).toEqual({ status: "success", user });
+    expect(signInWithRedirect).not.toHaveBeenCalled();
+    expect(immediateGoogleScreen(outcome).screen).toBe("app");
+    expect(immediateGoogleScreen(outcome).message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+  });
+
+  it("does not show the red line when the iPhone popup closes with no account", async () => {
+    const outcome = await startIphoneGoogleSignIn({
+      popupAuth: { name: "popup" },
+      provider: { providerId: "google.com" },
+      storage: memoryStorage(),
+      signInWithPopup: () => new Promise(() => {}),
+      getPopup: () => ({ closed: true }),
+      waitForRelayUser: () => new Promise(() => {}),
+      graceMs: 15,
+    });
+    expect(outcome.status).toBe("cancelled");
+    expect(immediateGoogleScreen(outcome)).toEqual({ screen: "login", message: "" });
+    expect(outcome.message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+  });
+
+  it("keeps listening when Safari hides window.closed and the account arrives later", async () => {
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    let deliver;
+    const outcome = await startIphoneGoogleSignIn({
+      popupAuth: { name: "popup" },
+      provider: { providerId: "google.com" },
+      storage: memoryStorage(),
+      signInWithPopup: () => new Promise(() => {}),
+      getPopup: () => ({
+        get closed() {
+          throw new Error("Cross-Origin-Opener-Policy");
+        },
+      }),
+      waitForRelayUser: () => new Promise((resolve) => { deliver = resolve; }),
+      graceMs: 20,
+    });
+    expect(outcome.status).toBe("cancelled");
+    expect(immediateGoogleScreen(outcome)).toEqual({ screen: "login", message: "" });
+    deliver(user);
+    await expect(outcome.whenUser).resolves.toBe(user);
+    expect(immediateGoogleScreen({ status: "success", user }).message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
   });
 });
