@@ -8,6 +8,12 @@ const quotaError = Object.assign(
   { code: "storage/quota-exceeded" }
 );
 
+const compact = {
+  blob: new Blob(["jpeg"], { type: "image/jpeg" }),
+  dataUrl: "data:image/jpeg;base64,c21hbGw=",
+  type: "image/jpeg",
+};
+
 function photoChange(overrides) {
   return changeProfilePhoto({
     file: new File(["pic"], "me.png", { type: "image/png" }),
@@ -17,13 +23,37 @@ function photoChange(overrides) {
     upload: jest.fn().mockResolvedValue(),
     downloadURL: jest.fn().mockResolvedValue(remote),
     writeProfile: jest.fn().mockResolvedValue(),
+    compress: jest.fn().mockResolvedValue(compact),
     ...overrides,
   });
 }
 
 describe("changeProfilePhoto", () => {
-  it("restores the previous avatar and drops the local preview when upload fails", async () => {
+  it("saves a compressed photo on the profile when Storage is over quota", async () => {
     const upload = jest.fn().mockRejectedValue(quotaError);
+    const writeProfile = jest.fn().mockResolvedValue();
+    const result = await photoChange({
+      previousPhotoURL: previous,
+      upload,
+      downloadURL: jest.fn().mockResolvedValue("blob:http://localhost/selected"),
+      writeProfile,
+    });
+
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(writeProfile).toHaveBeenCalledWith("user-1", { photoURL: compact.dataUrl }, { merge: true });
+    expect(result.photoURL).toBe(compact.dataUrl);
+    expect(result.pendingPreview).toBe("");
+    expect(result.error).toBeNull();
+    expect(result.storedInProfile).toBe(true);
+    expect(resolveProfilePhotoUrl({
+      profilePhotoURL: result.photoURL,
+      authPhotoURL: "",
+    })).toBe(compact.dataUrl);
+  });
+
+  it("restores the previous avatar and drops the local preview when a non-quota upload fails", async () => {
+    const networkError = new Error("network down");
+    const upload = jest.fn().mockRejectedValue(networkError);
     const writeProfile = jest.fn();
     const result = await photoChange({
       previousPhotoURL: previous,
@@ -37,10 +67,10 @@ describe("changeProfilePhoto", () => {
     expect(result.photoURL).toBe(previous);
     expect(result.pendingPreview).toBe("");
     expect(result.photoURL).not.toMatch(/^(blob:|data:)/);
-    expect(result.error).toBe(quotaError);
+    expect(result.error).toBe(networkError);
 
     const stillShowing = resolveProfilePhotoUrl({
-      profilePhotoURL: result.pendingPreview || "data:image/png;base64,selected",
+      profilePhotoURL: result.pendingPreview || "blob:http://localhost/selected",
       authPhotoURL: "",
     });
     expect(stillShowing).toBe("");
@@ -51,15 +81,35 @@ describe("changeProfilePhoto", () => {
     expect(restored).toBe(previous);
   });
 
-  it("restores initials when the only saved photo is already a local preview and upload fails", async () => {
+  it("keeps a previously saved profile photo and drops the preview when a later save fails", async () => {
+    const saved = "data:image/jpeg;base64,old-saved";
     const result = await photoChange({
-      previousPhotoURL: "data:image/png;base64,fake-saved",
+      previousPhotoURL: saved,
       upload: jest.fn().mockRejectedValue(new Error("network down")),
     });
-    expect(result.photoURL).toBe("");
+    expect(result.photoURL).toBe(saved);
     expect(result.pendingPreview).toBe("");
     expect(resolveProfilePhotoUrl({
+      profilePhotoURL: result.pendingPreview || "blob:http://localhost/selected",
+      authPhotoURL: "",
+    })).toBe("");
+    expect(resolveProfilePhotoUrl({
       profilePhotoURL: result.photoURL,
+      authPhotoURL: "",
+    })).toBe(saved);
+  });
+
+  it("does not keep a fake preview when the quota fallback write fails", async () => {
+    const writeError = new Error("permission-denied");
+    const result = await photoChange({
+      upload: jest.fn().mockRejectedValue(quotaError),
+      writeProfile: jest.fn().mockRejectedValue(writeError),
+    });
+    expect(result.photoURL).toBe(previous);
+    expect(result.pendingPreview).toBe("");
+    expect(result.error).toBe(writeError);
+    expect(resolveProfilePhotoUrl({
+      profilePhotoURL: result.pendingPreview,
       authPhotoURL: "",
     })).toBe("");
   });
@@ -94,12 +144,17 @@ describe("changeProfilePhoto", () => {
     expect(result.pendingPreview).toBe("");
   });
 
-  it("uses the quota message instead of the raw Firebase string", async () => {
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+  it("does not surface a quota error when the compressed photo is saved on the profile", async () => {
     const result = await photoChange({
       upload: jest.fn().mockRejectedValue(quotaError),
     });
-    const message = formatProfilePhotoSaveError(result.error);
+    expect(result.error).toBeNull();
+    expect(result.photoURL).toBe(compact.dataUrl);
+  });
+
+  it("uses the quota message instead of the raw Firebase string when fallback cannot be used", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const message = formatProfilePhotoSaveError(quotaError);
     expect(message).toBe(PROFILE_PHOTO_QUOTA_ERROR);
     expect(message).not.toContain("become-app-dde78");
     expect(message).not.toContain("storage/quota-exceeded");

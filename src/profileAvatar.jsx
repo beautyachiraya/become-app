@@ -7,8 +7,9 @@ function rememberFailed(failed, url) {
 }
 
 /**
- * Profile photo: stored URL, then the sign-in photo, then initials.
- * A broken image moves to the next option. A local file preview is never shown.
+ * Profile photo: stored URL (including a data:image saved on the profile),
+ * then the sign-in photo, then initials. A broken image moves to the next
+ * option. A local blob preview is never shown.
  */
 export default function ProfileAvatarImage({ profilePhotoURL, authPhotoURL, initial, initialStyle }) {
   const [failedUrls, setFailedUrls] = useState([]);
