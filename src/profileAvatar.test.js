@@ -83,14 +83,21 @@ describe("ProfileAvatarImage", () => {
     }
   });
 
-  it("does not show a local file preview when there is no Google photo", () => {
+  it("does not show a local blob preview when there is no Google photo", () => {
     const view = renderAvatar({
-      profilePhotoURL: "data:image/png;base64,aaaa",
+      profilePhotoURL: "blob:http://localhost/selected",
       authPhotoURL: "",
       initial: "A",
     });
     expect(view.container.querySelector("img")).toBeNull();
     expect(view.container.textContent).toBe("A");
+    view.unmount();
+  });
+
+  it("shows a compressed photo saved on the profile", () => {
+    const saved = "data:image/jpeg;base64,aaaa";
+    const view = renderAvatar({ profilePhotoURL: saved, authPhotoURL: "", initial: "A" });
+    expect(view.container.querySelector("img").getAttribute("src")).toBe(saved);
     view.unmount();
   });
 

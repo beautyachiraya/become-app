@@ -75,17 +75,25 @@ describe("resolveProfilePhotoUrl", () => {
     expect(resolveProfilePhotoUrl({})).toBe("");
   });
 
-  it("skips a local file preview so a failed upload cannot look saved", () => {
+  it("skips a local blob preview so a failed upload cannot look saved", () => {
     expect(isLocalPhotoPreview("blob:http://localhost/selected")).toBe(true);
-    expect(isLocalPhotoPreview("data:image/png;base64,aaaa")).toBe(true);
+    expect(isLocalPhotoPreview("data:image/jpeg;base64,aaaa")).toBe(false);
     expect(resolveProfilePhotoUrl({
-      profilePhotoURL: "data:image/png;base64,aaaa",
+      profilePhotoURL: "blob:http://localhost/selected",
       authPhotoURL: "",
     })).toBe("");
     expect(resolveProfilePhotoUrl({
       profilePhotoURL: "blob:http://localhost/selected",
       authPhotoURL: google,
     })).toBe(google);
+  });
+
+  it("shows a compressed photo saved on the profile when Storage is unavailable", () => {
+    const saved = "data:image/jpeg;base64,aaaa";
+    expect(resolveProfilePhotoUrl({
+      profilePhotoURL: saved,
+      authPhotoURL: google,
+    })).toBe(saved);
   });
 
   it("skips a stored URL that failed to load and uses the Google photo", () => {

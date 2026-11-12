@@ -8,15 +8,27 @@ function cleanPhotoUrl(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-/** A FileReader data URL or blob URL is only a local preview, never a saved photo. */
+/**
+ * A blob URL is only a local preview, never a saved photo.
+ * A data:image URL can be a photo saved in Firestore when Storage is full.
+ */
 export function isLocalPhotoPreview(value) {
   const url = cleanPhotoUrl(value).toLowerCase();
-  return url.startsWith("blob:") || url.startsWith("data:");
+  return url.startsWith("blob:");
+}
+
+export function isSavedProfilePhotoUrl(value) {
+  const url = cleanPhotoUrl(value);
+  if (!url || isLocalPhotoPreview(url)) return false;
+  const lower = url.toLowerCase();
+  if (lower.startsWith("data:image/")) return true;
+  if (lower.startsWith("data:")) return false;
+  return true;
 }
 
 function usablePhotoUrl(value, failed) {
   const url = cleanPhotoUrl(value);
-  if (!url || failed.has(url) || isLocalPhotoPreview(url)) return "";
+  if (!url || failed.has(url) || !isSavedProfilePhotoUrl(url)) return "";
   return url;
 }
 
@@ -65,6 +77,10 @@ function isProfileStorageUnavailable(error) {
     return true;
   }
   return /\b402\b/.test(text) && (text.includes("storage") || text.includes("bucket"));
+}
+
+export function isProfilePhotoStorageBlocked(error) {
+  return isStorageQuotaExceeded(error) || isProfileStorageUnavailable(error);
 }
 
 export function formatProfilePhotoSaveError(error) {

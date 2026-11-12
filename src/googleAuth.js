@@ -1,11 +1,12 @@
 /**
  * Google sign-in helpers.
- * Desktop and Android browsers use a popup. A normal iPhone Safari tab also
- * uses a popup, plus a second window that never visits Google (see
- * prefersGoogleRelay). That window can read the account the Firebase handler
- * stores when Safari drops window.opener. A full-page redirect cannot: the
- * account stays in the Firebase host's storage, and the return looks empty.
- * In-app browsers and the home-screen icon still redirect.
+ * Desktop and Android browsers use a popup. iPhone and iPad (a normal Safari
+ * tab, an in-app browser, and the home-screen icon) leave for Google on this
+ * page's own origin, then sign in with the ID token Google puts in the return
+ * URL. That return never uses Firebase's /__/auth/handler, so it does not
+ * depend on a popup, a second window, or getRedirectResult seeing partitioned
+ * iframe storage. authDomain stays on the Firebase host. Android in-app
+ * browsers still use a Firebase full-page redirect.
  */
 
 export const FIREBASE_AUTH_DOMAIN = "become-app-dde78.firebaseapp.com";
@@ -14,6 +15,16 @@ export const FIREBASE_AUTH_DOMAIN = "become-app-dde78.firebaseapp.com";
 export const PRODUCTION_APP_HOST = "become-app-rho.vercel.app";
 
 export const GOOGLE_REDIRECT_INTENT_KEY = "become.googleRedirectIntent";
+
+/** Session flag for the iPhone ID-token return, including cancel/back. */
+export const GOOGLE_ID_TOKEN_REQUEST_KEY = "become.googleIdTokenRequest";
+
+/**
+ * Web client Firebase already uses for Google sign-in. Public, not a secret.
+ * Discovered from createAuthUri for project become-app-dde78.
+ */
+export const GOOGLE_WEB_CLIENT_ID =
+  "747108494298-anq3jjqaibhpp77sop3vngn6oum98pib.apps.googleusercontent.com";
 
 export const GOOGLE_REDIRECT_INCOMPLETE =
   "Google sign-in didn't finish. Please try again.";
@@ -70,24 +81,17 @@ function isStandaloneApp(source) {
 }
 
 /**
- * Full-page redirect only where a second window cannot bring the account back.
- *
- * The Firebase handler on become-app-dde78.firebaseapp.com can give a popup
- * account to this page through window.opener. iPhone Safari clears that link
- * when the popup follows Google. The handler then stores the account in
- * localStorage on the Firebase host. A normal Safari tab opens a second
- * window onto that host — one that never visits Google, so its opener stays
- * — and that window hands the account back. See prefersGoogleRelay.
- *
- * A full-page redirect stores the account in sessionStorage instead. The
- * login page cannot see it: getRedirectResult asks an iframe, and iPhone
- * Safari keeps that iframe's storage separate. The return has no user, and
- * the login screen paints "didn't finish" even after a real account pick.
- * authDomain stays on the Firebase host. Google rejects
+ * Firebase full-page redirect (signInWithRedirect + getRedirectResult).
+ * Only non-iOS in-app browsers and home-screen icons use this. iPhone and
+ * iPad use prefersGoogleIdTokenRedirect instead: a Firebase redirect stores
+ * the account on become-app-dde78.firebaseapp.com, and getRedirectResult's
+ * iframe cannot see it under iPhone Safari partitioning. authDomain stays
+ * on the Firebase host. Google rejects
  * https://become-app-rho.vercel.app/__/auth/handler with redirect_uri_mismatch.
  */
 export function prefersGoogleRedirect(env) {
   const source = env || {};
+  if (isIOSDevice(source)) return false;
   const userAgent = source.userAgent || "";
   if (isInAppBrowser(userAgent)) return true;
   if (isStandaloneApp(source)) return true;
@@ -95,15 +99,23 @@ export function prefersGoogleRedirect(env) {
 }
 
 /**
- * A normal iPhone or iPad Safari tab. The account chooser is a popup. A
- * second window on the Firebase host reads the stored account after Safari
- * drops window.opener. In-app browsers and the home-screen icon cannot rely
- * on that second window, so they still redirect.
+ * iPhone and iPad, including a normal Safari tab, in-app browsers, and the
+ * home-screen icon. Google returns to this page's origin with an ID token,
+ * then signInWithCredential signs the person into the existing Auth project.
+ * This does not open a second window from the same tap.
+ */
+export function prefersGoogleIdTokenRedirect(env) {
+  return isIOSDevice(env || {});
+}
+
+/**
+ * Former iPhone path: popup plus a second Firebase-host window.
+ * That second window often never opens (one popup per tap, or Safari's
+ * blocker), so this is no longer used. Kept so older tests can show it is off.
  */
 export function prefersGoogleRelay(env) {
-  const source = env || {};
-  if (prefersGoogleRedirect(source)) return false;
-  return isIOSDevice(source);
+  void env;
+  return false;
 }
 
 /**
@@ -152,9 +164,9 @@ export function startPageHashUrl(origin, handlerUrl) {
 /** iOS and Android drop window.open once the click handler has awaited. Open first. */
 export function shouldPrimeGooglePopup(env) {
   const source = env || {};
-  if (prefersGoogleRedirect(source)) return false;
+  if (prefersGoogleRedirect(source) || prefersGoogleIdTokenRedirect(source)) return false;
   const userAgent = source.userAgent || "";
-  return isIOSDevice(source) || /Android/i.test(userAgent);
+  return /Android/i.test(userAgent);
 }
 
 /**
@@ -460,8 +472,8 @@ export function userFromFinishedPick(outcome) {
 export function redirectResultContext(env, details) {
   const source = env || {};
   const extra = details || {};
-  const phonePopup = !prefersGoogleRedirect(source) && (
-    isIOSDevice(source) || /Android/i.test(source.userAgent || "")
+  const phonePopup = isIOSDevice(source) || (
+    !prefersGoogleRedirect(source) && /Android/i.test(source.userAgent || "")
   );
   return {
     hadPendingRedirect: extra.hadPendingRedirect,
@@ -992,4 +1004,245 @@ export async function startIphoneGoogleSignIn({
     return { status: "cancelled" };
   }
   return popupOutcome;
+}
+
+/** Origin plus a trailing slash, which must match the registered redirect URI. */
+export function googleIdTokenRedirectUri(origin) {
+  if (!origin || typeof origin !== "string") return "";
+  return origin.replace(/\/+$/, "") + "/";
+}
+
+export function randomGoogleOAuthValue(randomBytes) {
+  const bytes = new Uint8Array(32);
+  const fill = randomBytes || (typeof crypto !== "undefined" && crypto.getRandomValues
+    ? (target) => crypto.getRandomValues(target)
+    : null);
+  if (fill) {
+    fill(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export function buildGoogleIdTokenAuthUrl({ clientId, redirectUri, state, nonce }) {
+  if (!clientId || !redirectUri || !state || !nonce) return "";
+  const params = new URLSearchParams();
+  params.set("client_id", clientId);
+  params.set("redirect_uri", redirectUri);
+  params.set("response_type", "id_token");
+  params.set("scope", "openid email profile");
+  params.set("state", state);
+  params.set("nonce", nonce);
+  params.set("prompt", "select_account");
+  return "https://accounts.google.com/o/oauth2/v2/auth?" + params.toString();
+}
+
+function readIdTokenRequest(storage) {
+  try {
+    if (!storage) return null;
+    const raw = storage.getItem(GOOGLE_ID_TOKEN_REQUEST_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== "object") return null;
+    if (typeof value.state !== "string" || !value.state) return null;
+    if (typeof value.nonce !== "string" || !value.nonce) return null;
+    return {
+      state: value.state,
+      nonce: value.nonce,
+      fromSignup: value.fromSignup === true,
+      redirectUri: typeof value.redirectUri === "string" ? value.redirectUri : "",
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+export function rememberGoogleIdTokenRequest(storage, request) {
+  try {
+    if (!storage || !request) return;
+    storage.setItem(GOOGLE_ID_TOKEN_REQUEST_KEY, JSON.stringify({
+      state: request.state,
+      nonce: request.nonce,
+      fromSignup: !!request.fromSignup,
+      redirectUri: request.redirectUri || "",
+    }));
+  } catch (err) {
+    // The return can still be checked; a blocked store may look like a cancel.
+  }
+}
+
+export function clearGoogleIdTokenRequest(storage) {
+  try {
+    if (storage) storage.removeItem(GOOGLE_ID_TOKEN_REQUEST_KEY);
+  } catch (err) {
+    // Ignore storage failures.
+  }
+}
+
+export function peekGoogleIdTokenRequest(storage) {
+  return readIdTokenRequest(storage);
+}
+
+export function takeGoogleIdTokenRequest(storage) {
+  const value = readIdTokenRequest(storage);
+  clearGoogleIdTokenRequest(storage);
+  return value;
+}
+
+export function parseJwtPayload(token) {
+  if (typeof token !== "string" || !token) return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const raw = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = raw + "=".repeat((4 - (raw.length % 4)) % 4);
+    const json = typeof atob === "function"
+      ? atob(padded)
+      : Buffer.from(padded, "base64").toString("utf8");
+    const payload = JSON.parse(json);
+    return payload && typeof payload === "object" ? payload : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/** Read Google's implicit-flow return from a URL hash or query string. */
+export function readGoogleOAuthReturn(hashOrSearch) {
+  if (typeof hashOrSearch !== "string" || !hashOrSearch) {
+    return { idToken: "", state: "", error: "" };
+  }
+  let raw = hashOrSearch;
+  if (raw.charAt(0) === "#" || raw.charAt(0) === "?") raw = raw.slice(1);
+  // Google sometimes puts the fragment after a stray "?" or vice versa.
+  const query = raw.replace(/\?/g, "&");
+  const params = new URLSearchParams(query);
+  return {
+    idToken: params.get("id_token") || "",
+    state: params.get("state") || "",
+    error: params.get("error") || "",
+  };
+}
+
+/**
+ * Outcome of a return to the app origin after Google's account picker.
+ * A matching ID token is "success". Cancel, back, access_denied, or a leftover
+ * request without a token is "abandoned" — never the red "didn't finish" line.
+ * The token is in the URL on this origin, so a missing token is not a hidden
+ * completed sign-in.
+ */
+export function googleIdTokenReturnOutcome(hashOrSearch, request, context) {
+  const parsed = readGoogleOAuthReturn(hashOrSearch);
+  if (parsed.error) {
+    return { status: "abandoned", fromSignup: !!(request && request.fromSignup) };
+  }
+  if (parsed.idToken) {
+    if (!request || parsed.state !== request.state) {
+      const error = new Error("Google sign-in couldn't be finished. Please try again.");
+      error.code = "auth/missing-google-credential";
+      return { status: "error", error, fromSignup: !!(request && request.fromSignup) };
+    }
+    const payload = parseJwtPayload(parsed.idToken);
+    if (!payload || payload.nonce !== request.nonce) {
+      const error = new Error("Google sign-in couldn't be finished. Please try again.");
+      error.code = "auth/missing-google-credential";
+      return { status: "error", error, fromSignup: !!request.fromSignup };
+    }
+    return {
+      status: "success",
+      idToken: parsed.idToken,
+      fromSignup: !!request.fromSignup,
+    };
+  }
+  if (!request) return { status: "none" };
+  // No token means the person did not finish picking an account, or they
+  // came back with a leftover flag. That is a cancel, not "didn't finish".
+  void context;
+  return { status: "abandoned", fromSignup: !!request.fromSignup };
+}
+
+export function consumeGoogleIdTokenReturn(hashOrSearch, storage, context) {
+  const request = peekGoogleIdTokenRequest(storage);
+  const outcome = googleIdTokenReturnOutcome(hashOrSearch, request, context);
+  if (outcome.status !== "none") clearGoogleIdTokenRequest(storage);
+  return outcome;
+}
+
+export function stripGoogleOAuthHash(win) {
+  try {
+    if (!win || !win.location) return;
+    const hash = win.location.hash || "";
+    if (!hash) return;
+    if (win.history && typeof win.history.replaceState === "function") {
+      const path = (win.location.pathname || "/") + (win.location.search || "");
+      win.history.replaceState(null, "", path);
+    } else {
+      win.location.hash = "";
+    }
+  } catch (err) {
+    // Leaving the hash is safe; a refresh would see a consumed request.
+  }
+}
+
+/**
+ * Leave this page for Google and come back to the same origin with an ID token.
+ * Used on iPhone and iPad. Does not open a popup or a second window.
+ */
+export async function startGoogleIdTokenRedirect({
+  storage,
+  fromSignup,
+  origin,
+  clientId,
+  assign,
+  randomBytes,
+}) {
+  const cid = clientId || GOOGLE_WEB_CLIENT_ID;
+  const redirectUri = googleIdTokenRedirectUri(origin);
+  const state = randomGoogleOAuthValue(randomBytes);
+  const nonce = randomGoogleOAuthValue(randomBytes);
+  if (!cid || !redirectUri || typeof assign !== "function") {
+    const error = new Error("Google sign-in couldn't be finished. Please try again.");
+    error.code = "auth/operation-not-supported-in-this-environment";
+    return { status: "error", error };
+  }
+  const url = buildGoogleIdTokenAuthUrl({
+    clientId: cid,
+    redirectUri,
+    state,
+    nonce,
+  });
+  rememberGoogleIdTokenRequest(storage, {
+    state,
+    nonce,
+    fromSignup: !!fromSignup,
+    redirectUri,
+  });
+  try {
+    assign(url);
+    return { status: "redirecting" };
+  } catch (error) {
+    clearGoogleIdTokenRequest(storage);
+    return { status: "error", error };
+  }
+}
+
+export async function finishGoogleIdTokenSignIn({
+  idToken,
+  auth,
+  signInWithCredential,
+  credentialFromIdToken,
+}) {
+  if (!idToken || typeof signInWithCredential !== "function" || typeof credentialFromIdToken !== "function") {
+    const error = new Error("Google sign-in couldn't be finished. Please try again.");
+    error.code = "auth/missing-google-credential";
+    throw error;
+  }
+  const credential = credentialFromIdToken(idToken);
+  if (!credential) {
+    const error = new Error("Google sign-in couldn't be finished. Please try again.");
+    error.code = "auth/missing-google-credential";
+    throw error;
+  }
+  const signedIn = await signInWithCredential(auth, credential);
+  return (signedIn && signedIn.user) || null;
 }
