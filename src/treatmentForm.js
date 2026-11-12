@@ -15,7 +15,7 @@ export function emptyTreatmentForm() {
   };
 }
 
-/** Toggle between a counted package and a no-expiry journal. */
+/** Toggle between a counted package and no-expiry Per visit (trackMode "journal"). */
 export function switchTrackMode(form, trackMode) {
   const current = form || emptyTreatmentForm();
   if (trackMode === "journal") {

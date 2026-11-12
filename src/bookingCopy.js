@@ -58,7 +58,7 @@ export const BOOKING_COPY = {
     booking_close: "Close",
     booking_loading: "Loading your visits…",
     booking_dismiss: "Dismiss",
-    booking_journal: "Journal",
+    booking_journal: "Per visit",
     booking_expires: "Expires",
   },
   th: {
@@ -115,7 +115,7 @@ export const BOOKING_COPY = {
     booking_close: "ปิด",
     booking_loading: "กำลังโหลดการไปของคุณ…",
     booking_dismiss: "ปิด",
-    booking_journal: "บันทึก",
+    booking_journal: "รายครั้ง",
     booking_expires: "หมดอายุ",
   },
 };
