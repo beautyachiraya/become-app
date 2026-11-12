@@ -6,6 +6,7 @@ import {
   resolveAuthDomain,
   prefersGoogleRedirect,
   prefersGoogleRelay,
+  prefersGoogleIdTokenRedirect,
   shouldPrimeGooglePopup,
   redirectFallbackAllowed,
   GOOGLE_AUTH_START_PATH,
@@ -49,6 +50,20 @@ import {
   userFromGoogleRelayEvent,
   startIphoneGoogleSignIn,
   listenForGoogleRelay,
+  GOOGLE_WEB_CLIENT_ID,
+  GOOGLE_ID_TOKEN_REQUEST_KEY,
+  googleIdTokenRedirectUri,
+  buildGoogleIdTokenAuthUrl,
+  randomGoogleOAuthValue,
+  rememberGoogleIdTokenRequest,
+  peekGoogleIdTokenRequest,
+  takeGoogleIdTokenRequest,
+  parseJwtPayload,
+  readGoogleOAuthReturn,
+  googleIdTokenReturnOutcome,
+  consumeGoogleIdTokenReturn,
+  startGoogleIdTokenRedirect,
+  finishGoogleIdTokenSignIn,
 } from "./googleAuth";
 
 function memoryStorage(initial) {
@@ -80,11 +95,13 @@ const IPHONE_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Ap
 const ANDROID_CHROME = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
 
 describe("prefersGoogleRedirect", () => {
-  it("keeps a popup on iPhone Safari, Android, and a narrow desktop window", () => {
+  it("keeps a popup on Android and a narrow desktop window, and uses an ID token return on iPhone", () => {
     expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(false);
-    expect(prefersGoogleRelay({ userAgent: IPHONE_SAFARI })).toBe(true);
+    expect(prefersGoogleRelay({ userAgent: IPHONE_SAFARI })).toBe(false);
+    expect(prefersGoogleIdTokenRedirect({ userAgent: IPHONE_SAFARI })).toBe(true);
     expect(prefersGoogleRedirect({ userAgent: ANDROID_CHROME })).toBe(false);
     expect(prefersGoogleRelay({ userAgent: ANDROID_CHROME })).toBe(false);
+    expect(prefersGoogleIdTokenRedirect({ userAgent: ANDROID_CHROME })).toBe(false);
     expect(prefersGoogleRedirect({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       platform: "MacIntel",
@@ -97,6 +114,11 @@ describe("prefersGoogleRedirect", () => {
       maxTouchPoints: 5,
     })).toBe(false);
     expect(prefersGoogleRelay({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+      platform: "MacIntel",
+      maxTouchPoints: 5,
+    })).toBe(false);
+    expect(prefersGoogleIdTokenRedirect({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
       platform: "MacIntel",
       maxTouchPoints: 5,
@@ -117,21 +139,25 @@ describe("prefersGoogleRedirect", () => {
     })).toBe(false);
   });
 
-  it("redirects from in-app browsers and an installed home-screen app, not a normal iPhone tab", () => {
-    expect(prefersGoogleRedirect({
+  it("uses the ID token return on iPhone in-app browsers and the home-screen icon too", () => {
+    const instagram = {
       userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 320.0.0.0.0",
-    })).toBe(true);
-    expect(prefersGoogleRelay({
-      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 320.0.0.0.0",
-    })).toBe(false);
+    };
+    expect(prefersGoogleRedirect(instagram)).toBe(false);
+    expect(prefersGoogleRelay(instagram)).toBe(false);
+    expect(prefersGoogleIdTokenRedirect(instagram)).toBe(true);
     expect(prefersGoogleRedirect({
       userAgent: IPHONE_SAFARI,
       standalone: true,
-    })).toBe(true);
+    })).toBe(false);
     expect(prefersGoogleRelay({
       userAgent: IPHONE_SAFARI,
       standalone: true,
     })).toBe(false);
+    expect(prefersGoogleIdTokenRedirect({
+      userAgent: IPHONE_SAFARI,
+      standalone: true,
+    })).toBe(true);
     expect(prefersGoogleRedirect({
       userAgent: IPHONE_SAFARI,
       standalone: false,
@@ -139,13 +165,25 @@ describe("prefersGoogleRedirect", () => {
     expect(prefersGoogleRelay({
       userAgent: IPHONE_SAFARI,
       standalone: false,
+    })).toBe(false);
+    expect(prefersGoogleIdTokenRedirect({
+      userAgent: IPHONE_SAFARI,
+      standalone: false,
     })).toBe(true);
+  });
+
+  it("still uses a Firebase redirect from an Android in-app browser", () => {
+    const androidInstagram = {
+      userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36 Instagram 320.0.0.0.0",
+    };
+    expect(prefersGoogleRedirect(androidInstagram)).toBe(true);
+    expect(prefersGoogleIdTokenRedirect(androidInstagram)).toBe(false);
   });
 });
 
 describe("shouldPrimeGooglePopup", () => {
   it("opens the window during the tap on phones that use a popup", () => {
-    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(true);
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(false);
     expect(shouldPrimeGooglePopup({ userAgent: ANDROID_CHROME })).toBe(true);
     expect(shouldPrimeGooglePopup({
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -491,11 +529,12 @@ describe("iPhone Safari popup cannot return an account", () => {
     expect(userFromPopupOpener(popup.opener, account)).toBeNull();
     expect(immediateGoogleScreen({ status: "success", user: userFromPopupOpener(popup.opener, account) }).screen).toBe("login");
     expect(immediateGoogleScreen({ status: "cancelled" })).toEqual({ screen: "login", message: "" });
-    // The lost opener is why the popup alone cannot finish. A normal iPhone
-    // tab still uses that popup, and a second window reads the stored account.
+    // The lost opener is why a popup cannot finish on iPhone Safari.
+    // The current path leaves this page and comes back with an ID token.
     expect(prefersGoogleRedirect({ userAgent: IPHONE_SAFARI })).toBe(false);
-    expect(prefersGoogleRelay({ userAgent: IPHONE_SAFARI })).toBe(true);
-    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(true);
+    expect(prefersGoogleRelay({ userAgent: IPHONE_SAFARI })).toBe(false);
+    expect(prefersGoogleIdTokenRedirect({ userAgent: IPHONE_SAFARI })).toBe(true);
+    expect(shouldPrimeGooglePopup({ userAgent: IPHONE_SAFARI })).toBe(false);
   });
 
   it("still returns the account on desktop, where the popup opener stays", () => {
@@ -764,11 +803,15 @@ describe("googleRedirectOutcome", () => {
     expect(redirectResultContext(
       { userAgent: IPHONE_SAFARI, standalone: true },
       { hadPendingRedirect: true, navigationType: "navigate" }
-    ).popupReturn).toBe(false);
+    ).popupReturn).toBe(true);
     expect(googleRedirectOutcome(null, "login", redirectResultContext(
       { userAgent: IPHONE_SAFARI, standalone: true },
       { hadPendingRedirect: true, navigationType: "navigate" }
-    )).message).toBe(GOOGLE_REDIRECT_INCOMPLETE);
+    )).status).toBe("abandoned");
+    expect(googleRedirectOutcome(null, "login", redirectResultContext(
+      { userAgent: IPHONE_SAFARI, standalone: true },
+      { hadPendingRedirect: true, navigationType: "navigate" }
+    )).message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
     expect(redirectResultContext(
       {
         userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
@@ -839,30 +882,40 @@ describe("startGoogleSignIn", () => {
     expect(peekGoogleRedirectIntent(storage)).toBe("login");
   });
 
-  it("sends iPhone Safari through the popup and does not start a redirect", async () => {
+  it("does not send iPhone Safari through a popup or a Firebase redirect", async () => {
     const storage = memoryStorage();
     const env = { userAgent: IPHONE_SAFARI };
     expect(prefersGoogleRedirect(env)).toBe(false);
-    expect(prefersGoogleRelay(env)).toBe(true);
-    expect(shouldPrimeGooglePopup(env)).toBe(true);
-    const user = { displayName: "Achiraya", email: "a@example.com" };
-    const signInWithPopup = jest.fn(() => Promise.resolve({ user }));
-    const signInWithRedirect = jest.fn(() => Promise.resolve());
-    const outcome = await startGoogleSignIn({
-      popupAuth,
-      redirectAuth,
-      provider,
-      fromSignup: false,
-      useRedirect: prefersGoogleRedirect(env),
-      allowRedirectFallback: redirectFallbackAllowed(env),
+    expect(prefersGoogleRelay(env)).toBe(false);
+    expect(prefersGoogleIdTokenRedirect(env)).toBe(true);
+    expect(shouldPrimeGooglePopup(env)).toBe(false);
+    const signInWithPopup = jest.fn();
+    const signInWithRedirect = jest.fn();
+    const assign = jest.fn();
+    const outcome = await startGoogleIdTokenRedirect({
       storage,
-      signInWithPopup,
-      signInWithRedirect,
+      fromSignup: false,
+      origin: "https://become-app-rho.vercel.app",
+      assign,
+      randomBytes: (bytes) => bytes.fill(7),
     });
-    expect(outcome).toEqual({ status: "success", user });
-    expect(signInWithPopup).toHaveBeenCalledWith(popupAuth, provider);
+    expect(outcome).toEqual({ status: "redirecting" });
+    expect(signInWithPopup).not.toHaveBeenCalled();
     expect(signInWithRedirect).not.toHaveBeenCalled();
+    expect(assign).toHaveBeenCalledTimes(1);
+    const url = assign.mock.calls[0][0];
+    expect(url).toContain("https://accounts.google.com/o/oauth2/v2/auth?");
+    expect(url).toContain("client_id=" + GOOGLE_WEB_CLIENT_ID);
+    expect(url).toContain("redirect_uri=" + encodeURIComponent("https://become-app-rho.vercel.app/"));
+    expect(url).toContain("response_type=id_token");
+    expect(url).not.toContain("__/auth/handler");
     expect(peekGoogleRedirectIntent(storage)).toBe("");
+    expect(peekGoogleIdTokenRequest(storage)).toEqual({
+      state: "07".repeat(32),
+      nonce: "07".repeat(32),
+      fromSignup: false,
+      redirectUri: "https://become-app-rho.vercel.app/",
+    });
     const returned = googleRedirectOutcome(null, "login", redirectResultContext(
       env,
       { hadPendingRedirect: true, navigationType: "navigate" }
@@ -1447,5 +1500,170 @@ describe("iPhone Google relay", () => {
     deliver(user);
     await expect(outcome.whenUser).resolves.toBe(user);
     expect(immediateGoogleScreen({ status: "success", user }).message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+  });
+});
+
+function jwtWithNonce(nonce) {
+  const payload = Buffer.from(JSON.stringify({
+    nonce,
+    aud: GOOGLE_WEB_CLIENT_ID,
+    iss: "https://accounts.google.com",
+    email: "a@example.com",
+  })).toString("base64url");
+  return "eyJhbGciOiJub25lIn0." + payload + ".sig";
+}
+
+describe("iPhone Google ID token return", () => {
+  const origin = "https://become-app-rho.vercel.app";
+  const redirectUri = "https://become-app-rho.vercel.app/";
+
+  it("builds a Google URL that returns to the app origin, not the Firebase handler", () => {
+    expect(googleIdTokenRedirectUri(origin)).toBe(redirectUri);
+    expect(googleIdTokenRedirectUri(origin + "/")).toBe(redirectUri);
+    const url = buildGoogleIdTokenAuthUrl({
+      clientId: GOOGLE_WEB_CLIENT_ID,
+      redirectUri,
+      state: "state-1",
+      nonce: "nonce-1",
+    });
+    const parsed = new URL(url);
+    expect(parsed.origin + parsed.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(parsed.searchParams.get("client_id")).toBe(GOOGLE_WEB_CLIENT_ID);
+    expect(parsed.searchParams.get("redirect_uri")).toBe(redirectUri);
+    expect(parsed.searchParams.get("response_type")).toBe("id_token");
+    expect(parsed.searchParams.get("scope")).toContain("openid");
+    expect(parsed.searchParams.get("state")).toBe("state-1");
+    expect(parsed.searchParams.get("nonce")).toBe("nonce-1");
+    expect(url).not.toContain("__/auth/handler");
+  });
+
+  it("signs the user in when Google returns an ID token to this origin", async () => {
+    const storage = memoryStorage();
+    const request = { state: "abc", nonce: "xyz", fromSignup: false, redirectUri };
+    rememberGoogleIdTokenRequest(storage, request);
+    const idToken = jwtWithNonce("xyz");
+    const hash = "#id_token=" + encodeURIComponent(idToken) + "&state=abc";
+    const returned = consumeGoogleIdTokenReturn(hash, storage);
+    expect(returned).toEqual({
+      status: "success",
+      idToken,
+      fromSignup: false,
+    });
+    expect(returned.message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+    expect(peekGoogleIdTokenRequest(storage)).toBeNull();
+
+    const user = { displayName: "Achiraya", email: "a@example.com" };
+    const credential = { providerId: "google.com", idToken };
+    const signInWithCredential = jest.fn(async () => ({ user }));
+    const credentialFromIdToken = jest.fn((token) => (token === idToken ? credential : null));
+    const signedIn = await finishGoogleIdTokenSignIn({
+      idToken: returned.idToken,
+      auth: { name: "auth" },
+      signInWithCredential,
+      credentialFromIdToken,
+    });
+    expect(credentialFromIdToken).toHaveBeenCalledWith(idToken);
+    expect(signInWithCredential).toHaveBeenCalledWith({ name: "auth" }, credential);
+    expect(signedIn).toBe(user);
+    expect(immediateGoogleScreen({ status: "success", user })).toEqual({
+      screen: "app",
+      message: "",
+      user,
+    });
+    expect(immediateGoogleScreen({ status: "success", user }).message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+  });
+
+  it("does not show the red banner when the person cancels or swipes back", () => {
+    const storage = memoryStorage();
+    rememberGoogleIdTokenRequest(storage, {
+      state: "abc",
+      nonce: "xyz",
+      fromSignup: false,
+      redirectUri,
+    });
+    const cancelled = consumeGoogleIdTokenReturn("#error=access_denied&state=abc", storage);
+    expect(cancelled).toEqual({ status: "abandoned", fromSignup: false });
+    expect(cancelled.message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+    expect(immediateGoogleScreen({ status: "cancelled" })).toEqual({ screen: "login", message: "" });
+
+    rememberGoogleIdTokenRequest(storage, {
+      state: "abc",
+      nonce: "xyz",
+      fromSignup: true,
+      redirectUri,
+    });
+    const backedOut = consumeGoogleIdTokenReturn("", storage, {
+      navigationType: "back_forward",
+    });
+    expect(backedOut).toEqual({ status: "abandoned", fromSignup: true });
+    expect(backedOut.message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+    expect(peekGoogleIdTokenRequest(storage)).toBeNull();
+
+    rememberGoogleIdTokenRequest(storage, {
+      state: "abc",
+      nonce: "xyz",
+      fromSignup: false,
+      redirectUri,
+    });
+    const leftover = consumeGoogleIdTokenReturn("", storage, {
+      navigationType: "navigate",
+      hadPendingRedirect: true,
+    });
+    expect(leftover).toEqual({ status: "abandoned", fromSignup: false });
+    expect(leftover.message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+  });
+
+  it("does not sign the user in when the ID token is missing or the state does not match", async () => {
+    const storage = memoryStorage();
+    rememberGoogleIdTokenRequest(storage, {
+      state: "abc",
+      nonce: "xyz",
+      fromSignup: false,
+      redirectUri,
+    });
+    const mismatch = consumeGoogleIdTokenReturn("#id_token=tok&state=other", storage);
+    expect(mismatch.status).toBe("error");
+    expect(mismatch.message).not.toBe(GOOGLE_REDIRECT_INCOMPLETE);
+
+    rememberGoogleIdTokenRequest(storage, {
+      state: "abc",
+      nonce: "xyz",
+      fromSignup: false,
+      redirectUri,
+    });
+    const badNonce = consumeGoogleIdTokenReturn(
+      "#id_token=" + encodeURIComponent(jwtWithNonce("nope")) + "&state=abc",
+      storage
+    );
+    expect(badNonce.status).toBe("error");
+
+    const signInWithCredential = jest.fn();
+    await expect(finishGoogleIdTokenSignIn({
+      idToken: "",
+      auth: {},
+      signInWithCredential,
+      credentialFromIdToken: jest.fn(),
+    })).rejects.toMatchObject({ code: "auth/missing-google-credential" });
+    expect(signInWithCredential).not.toHaveBeenCalled();
+  });
+
+  it("stores the request and leaves this page without opening a second window", async () => {
+    const storage = memoryStorage();
+    const assign = jest.fn();
+    const outcome = await startGoogleIdTokenRedirect({
+      storage,
+      fromSignup: true,
+      origin,
+      assign,
+      randomBytes: (bytes) => bytes.fill(1),
+    });
+    expect(outcome.status).toBe("redirecting");
+    expect(assign.mock.calls.length).toBe(1);
+    expect(peekGoogleIdTokenRequest(storage).fromSignup).toBe(true);
+    expect(takeGoogleIdTokenRequest(storage).redirectUri).toBe(redirectUri);
+    expect(googleIdTokenReturnOutcome("", null).status).toBe("none");
+    expect(parseJwtPayload(jwtWithNonce("n")).nonce).toBe("n");
+    expect(readGoogleOAuthReturn("#error=access_denied").error).toBe("access_denied");
+    expect(randomGoogleOAuthValue((bytes) => bytes.fill(2))).toBe("02".repeat(32));
   });
 });

@@ -3,12 +3,12 @@ import { auth, googleRedirectAuth, firebaseApiKey, db, storage } from "./firebas
 import { signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, signInWithCredential, signOut, onAuthStateChanged, GoogleAuthProvider, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { validateSignIn, validateResetEmail, mapAuthError, SIGNUP_NEXT_COPY, LANDING_HEADLINE, LANDING_BULLETS } from "./authForm";
 import {
-  prefersGoogleRedirect, prefersGoogleRelay, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
+  prefersGoogleRedirect, prefersGoogleIdTokenRedirect, shouldPrimeGooglePopup, redirectFallbackAllowed, beginGooglePopupGesture, readGoogleRedirectEnv,
   browserSessionStorage, peekGoogleRedirectIntent, takeGoogleRedirectIntent, clearGoogleRedirectIntent,
   hadPendingGoogleRedirect, clearPendingGoogleRedirect, readPageNavigationType, redirectResultContext,
-  startGoogleSignIn, startIphoneGoogleSignIn, loadGoogleRedirectResult, immediateGoogleScreen,
+  startGoogleSignIn, startGoogleIdTokenRedirect, finishGoogleIdTokenSignIn, consumeGoogleIdTokenReturn, stripGoogleOAuthHash, clearGoogleIdTokenRequest,
+  loadGoogleRedirectResult, immediateGoogleScreen,
   adoptRedirectUser, googleRedirectOutcome, profileFromGoogleUser, GOOGLE_REDIRECT_INCOMPLETE,
-  googleAuthRelayUrl, listenForGoogleRelay, userFromGoogleRelayEvent,
 } from "./googleAuth";
 import { createDataClient, formatWriteError, formatProfilePhotoSaveError } from "./userData";
 import ProfileAvatarImage from "./profileAvatar";
@@ -439,14 +439,6 @@ export default function Become(){
   useEffect(()=>{
     let active=true;
     const storage=browserSessionStorage();
-    // Read before getRedirectResult, which clears Firebase's pending flag.
-    // A normal iPhone tab signs in from the popup relay, so an empty result
-    // there is not "didn't finish". Android is the same. In-app browsers and
-    // the home-screen icon still come back through a full-page redirect.
-    const redirectContext=redirectResultContext(readGoogleRedirectEnv(), {
-      hadPendingRedirect:hadPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]"),
-      navigationType:readPageNavigationType(),
-    });
     function showGoogleRedirectError(intent, error){
       const msg=mapAuthError(error,"google");
       if(intent==="signup"){
@@ -456,6 +448,52 @@ export default function Become(){
         setLoginMessage(msg);
       }
     }
+    const idTokenReturn=consumeGoogleIdTokenReturn(
+      (typeof window!=="undefined"&&window.location&&window.location.hash)||"",
+      storage,
+      {navigationType:readPageNavigationType()}
+    );
+    if(idTokenReturn.status!=="none"){
+      if(typeof window!=="undefined")stripGoogleOAuthHash(window);
+    }
+    if(idTokenReturn.status==="success"){
+      finishGoogleIdTokenSignIn({
+        idToken:idTokenReturn.idToken,
+        auth,
+        signInWithCredential,
+        credentialFromIdToken:function(idToken){return GoogleAuthProvider.credential(idToken);},
+      }).then(function(user){
+        if(!active||!user)return;
+        setProfileForm(profileFromGoogleUser(user));
+        setJustSignedUp(!!idTokenReturn.fromSignup);
+        setAuthScreen("app");
+        setLoginMessage(function(msg){return msg===GOOGLE_REDIRECT_INCOMPLETE?"":msg;});
+        setSignupMessage(function(msg){return msg===GOOGLE_REDIRECT_INCOMPLETE?"":msg;});
+      }).catch(function(error){
+        if(!active)return;
+        console.error("[Become] Google sign-in failed", error);
+        showGoogleRedirectError(idTokenReturn.fromSignup?"signup":"login", error);
+      }).finally(function(){
+        if(active)setGoogleRedirectPending(false);
+      });
+      return()=>{active=false;};
+    }
+    if(idTokenReturn.status==="error"){
+      showGoogleRedirectError(idTokenReturn.fromSignup?"signup":"login", idTokenReturn.error);
+      setGoogleRedirectPending(false);
+      return()=>{active=false;};
+    }
+    if(idTokenReturn.status==="abandoned"){
+      setGoogleRedirectPending(false);
+    }
+    // Read before getRedirectResult, which clears Firebase's pending flag.
+    // iPhone and iPad now come back with an ID token on this origin. An empty
+    // Firebase result there is not "didn't finish". Android popup is the same.
+    // Android in-app browsers still come back through a full-page redirect.
+    const redirectContext=redirectResultContext(readGoogleRedirectEnv(), {
+      hadPendingRedirect:hadPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]"),
+      navigationType:readPageNavigationType(),
+    });
     loadGoogleRedirectResult(googleRedirectAuth, getRedirectResult)
       .then(async(result)=>{
         if(!active)return;
@@ -511,7 +549,9 @@ export default function Become(){
     function onPageShow(event){
       if(!event.persisted)return;
       // Swipe-back restores this screen with the old "didn't finish" text still on it.
-      clearGoogleRedirectIntent(browserSessionStorage());
+      const pageStorage=browserSessionStorage();
+      clearGoogleRedirectIntent(pageStorage);
+      clearGoogleIdTokenRequest(pageStorage);
       setGoogleRedirectPending(false);
       setAuthBusy(function(busy){return busy==="google"?"":busy;});
       setLoginMessage(function(msg){return msg===GOOGLE_REDIRECT_INCOMPLETE?"":msg;});
@@ -601,98 +641,65 @@ export default function Become(){
     setSignupMessage("");
     setAuthBusy("google");
     const env=readGoogleRedirectEnv();
+    const useIdTokenRedirect=prefersGoogleIdTokenRedirect(env);
     const useRedirect=prefersGoogleRedirect(env);
-    const useRelay=prefersGoogleRelay(env);
     const storage=browserSessionStorage();
+    if(useIdTokenRedirect){
+      // Leave this page for Google. The account comes back in the URL hash on
+      // this origin, then signInWithCredential signs the person in.
+      clearGoogleRedirectIntent(storage);
+      clearPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]");
+      let outcome=null;
+      try{
+        outcome=await startGoogleIdTokenRedirect({
+          storage,
+          fromSignup,
+          origin:window.location.origin,
+          assign:function(url){ window.location.assign(url); },
+        });
+      }catch(error){
+        outcome={status:"error", error};
+      }
+      if(outcome.status==="error"){
+        const msg=mapAuthError(outcome.error,"google");
+        if(msg){
+          if(fromSignup)setSignupMessage(msg);
+          else setLoginMessage(msg);
+        }
+        setAuthBusy("");
+      }
+      return;
+    }
     if(!useRedirect){
       // A popup must not inherit a leftover redirect flag, or a failed handoff
       // reloads onto the red "didn't finish" line.
       clearGoogleRedirectIntent(storage);
       clearPendingGoogleRedirect(storage, firebaseApiKey, "[DEFAULT]");
     }
-    // Must run before the first await. iOS only allows window.open inside the tap.
-    // The account chooser opens first. On a normal iPhone tab the relay opens
-    // second, still inside the tap, and never follows Google.
+    // Must run before the first await. Android only allows window.open inside the tap.
     const releasePopup=beginGooglePopupGesture(window, shouldPrimeGooglePopup(env));
-    let stopRelay=function(){};
-    let relayWindow=null;
-    let waitForRelayUser=null;
-    if(useRelay){
-      const relayUrl=googleAuthRelayUrl({
-        apiKey:firebaseApiKey,
-        parentOrigin:window.location.origin,
-      });
-      relayWindow=releasePopup.openRelay(relayUrl);
-      let resolveRelayUser;
-      let rejectRelayUser;
-      waitForRelayUser=function(){
-        return new Promise(function(resolve, reject){
-          resolveRelayUser=resolve;
-          rejectRelayUser=reject;
-        });
-      };
-      const relayPromise=waitForRelayUser();
-      waitForRelayUser=function(){return relayPromise;};
-      let relaySettled=false;
-      const unlisten=listenForGoogleRelay(window, function(account){
-        if(relaySettled)return;
-        relaySettled=true;
-        if(account.error){
-          rejectRelayUser(account.error);
-          return;
-        }
-        userFromGoogleRelayEvent({
-          event:account.event,
-          apiKey:firebaseApiKey,
-          auth,
-          signInWithCredential,
-          credentialFromTokens:function(idToken, accessToken){
-            return GoogleAuthProvider.credential(idToken, accessToken);
-          },
-        }).then(resolveRelayUser, rejectRelayUser);
-      });
-      stopRelay=function(){
-        unlisten();
-        try{ if(relayWindow)relayWindow.close(); }catch(err){ /* already closed */ }
-      };
-    }
     let outcome=null;
     try{
-      if(useRelay){
-        outcome=await startIphoneGoogleSignIn({
-          popupAuth:auth,
-          provider:googleProvider,
-          storage,
-          signInWithPopup,
-          getPopup:function(){return releasePopup.popup();},
-          waitForRelayUser,
-        });
-      }else{
-        outcome=await startGoogleSignIn({
-          popupAuth:auth,
-          redirectAuth:googleRedirectAuth,
-          provider:googleProvider,
-          fromSignup,
-          useRedirect,
-          allowRedirectFallback:redirectFallbackAllowed(env),
-          storage,
-          signInWithPopup,
-          signInWithRedirect,
-          getPopup:function(){return releasePopup.popup();},
-        });
-      }
+      outcome=await startGoogleSignIn({
+        popupAuth:auth,
+        redirectAuth:googleRedirectAuth,
+        provider:googleProvider,
+        fromSignup,
+        useRedirect,
+        allowRedirectFallback:redirectFallbackAllowed(env),
+        storage,
+        signInWithPopup,
+        signInWithRedirect,
+        getPopup:function(){return releasePopup.popup();},
+      });
     }catch(error){
       outcome={status:"error", error};
     }finally{
       releasePopup();
-      const keepRelay=outcome&&outcome.status==="cancelled"&&outcome.whenUser;
-      if(!keepRelay){
-        stopRelay();
-        try{
-          const popup=releasePopup.popup();
-          if(popup&&popup.close)popup.close();
-        }catch(err){ /* The chooser can already be gone. */ }
-      }
+      try{
+        const popup=releasePopup.popup();
+        if(popup&&popup.close&&!(outcome&&outcome.whenUser))popup.close();
+      }catch(err){ /* The chooser can already be gone. */ }
     }
     function enterFromGoogle(user){
       setProfileForm(profileFromGoogleUser(user));
@@ -712,13 +719,10 @@ export default function Become(){
         else setLoginMessage(msg);
       }
     }else if(outcome.whenUser){
-      // The button can come back while Safari hides window.closed and the
-      // person is still on the account picker. Home opens when they finish.
-      // The relay stays up until that account arrives, or until they leave.
+      // The button can come back while the window looks closed. Home opens
+      // when the account pick finishes.
       outcome.whenUser.then(function(user){
         if(user)enterFromGoogle(user);
-      }).finally(function(){
-        stopRelay();
       });
     }
     // "cancelled" is a closed popup or an unreadable window.closed. The button
