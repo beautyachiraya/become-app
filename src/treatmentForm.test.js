@@ -24,7 +24,7 @@ function markup(extra = {}) {
       allowModeSwitch
       onSubmit={() => {}}
       isSaving={false}
-      submitLabel="Add to My Diary"
+      submitLabel="Add Treatment"
       {...extra}
     />
   );
@@ -37,10 +37,10 @@ describe("treatment package form", () => {
     expect(html).toContain("clinic / provider");
     expect(html).toContain("total sessions");
     expect(html).toContain("expiry date");
-    expect(html).toContain("add to my diary");
+    expect(html).toContain("add treatment");
     expect(html).toContain("package");
-    expect(html).toContain("journal");
-    expect(html).not.toContain("like a diary");
+    expect(html).toContain("per visit");
+    expect(html).not.toMatch(/journal|diary/);
     expect(html).not.toContain("promo");
     expect(html).not.toContain("paid");
     expect(html).not.toContain("package type");
@@ -103,7 +103,7 @@ describe("new package writes", () => {
 });
 
 describe("journal create", () => {
-  it("stores a diary with no session count, no expiry, and an active status", () => {
+  it("stores per visit with no session count, no expiry, and an active status", () => {
     const created = buildNewTreatment(
       switchTrackMode(
         {
@@ -163,7 +163,9 @@ describe("journal create", () => {
         clinic: "Glow Clinic",
       },
     });
-    expect(html).toContain("No session count or expiry. Log visits whenever you go — like a diary.");
+    expect(html).toContain("No session count or expiry. Log visits whenever you go.");
+    expect(html).toContain("Per visit");
+    expect(html).not.toMatch(/journal|diary/i);
     expect(html).toContain("How often (optional)");
     expect(html).toContain("Whenever I go");
     expect(html).not.toContain("Total sessions");
@@ -237,7 +239,7 @@ describe("edited package writes", () => {
     expect(fresh.trackMode).toBeUndefined();
   });
 
-  it("keeps a journal diary nulls when its details change", () => {
+  it("keeps per-visit nulls when its details change", () => {
     const kept = buildEditedTreatment(
       {
         id: 9,

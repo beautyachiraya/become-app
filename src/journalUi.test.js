@@ -9,7 +9,7 @@ describe("journal home card", () => {
         clinic="Glow Clinic"
         icon="◈"
         palette={{ bg: "#FDF4EE", accent: "#D49068" }}
-        chip="Journal"
+        chip="Per visit"
         lastVisitLabel="Last visit"
         lastVisitText="No visits yet"
         subline="Tap to log a visit"
@@ -18,11 +18,13 @@ describe("journal home card", () => {
     );
   }
 
-  it("shows a Journal chip, last visit, and a prompt to log — never a remaining count", () => {
+  it("shows a Per visit chip, last visit, and a prompt to log — never a remaining count", () => {
     const html = card();
     expect(html).toContain("Botox");
     expect(html).toContain("Glow Clinic");
-    expect(html).toContain("Journal");
+    expect(html).toContain("Per visit");
+    expect(html).not.toMatch(/\bJournal\b/);
+    expect(html).not.toMatch(/\bDiary\b/);
     expect(html).toContain("Last visit");
     expect(html).toContain("No visits yet");
     expect(html).toContain("Tap to log a visit");

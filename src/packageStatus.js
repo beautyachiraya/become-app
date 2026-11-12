@@ -1,7 +1,7 @@
 /**
  * Open vs history mapping for treatment cards.
  *
- * trackMode "journal" is a no-expiry diary. It stays on Home until removed.
+ * trackMode "journal" is the no-expiry Per visit track. It stays on Home until removed.
  * Missing trackMode behaves as a package.
  *
  * Packages:
@@ -10,10 +10,10 @@
  *   open/Home  = remaining > 0 AND not expired
  *   history    = remaining === 0 (used up) OR expired
  *
- * Journals:
+ * Per visit (stored as trackMode "journal"):
  *   sessionsTotal / sessionsRemaining / expiresAt stay null
  *   open/Home      = status is not "removed"
- *   history        = logged visits only — the journal card is not "used up"
+ *   history        = logged visits only — the Per visit card is not "used up"
  *
  * kind = treatment.kind "promo" | "paid" (missing → paid) for packages that stored it.
  * Promo and paid packs stay separate cards / timeline rows.
@@ -51,7 +51,7 @@ export function sessionsUsed(treatment) {
   return coerceSessions(treatment && treatment.sessions).length;
 }
 
-/** Diary track. Anything else, including a missing trackMode, is a package. */
+/** Per visit track (trackMode "journal"). Anything else, including a missing trackMode, is a package. */
 export function isJournal(treatment) {
   return Boolean(treatment && treatment.trackMode === "journal");
 }
@@ -168,13 +168,13 @@ export function isExpiredPack(treatment, now) {
   return left !== null && left < 0;
 }
 
-/** Home: journal stays until removed; a package still has sessions and has not expired. */
+/** Home: Per visit stays until removed; a package still has sessions and has not expired. */
 export function isOpenPack(treatment, now) {
   if (isJournal(treatment)) return treatment.status !== "removed";
   return sessionsRemaining(treatment) > 0 && !isExpiredPack(treatment, now);
 }
 
-/** History packs are used-up or expired packages. A journal is never "used up". */
+/** History packs are used-up or expired packages. Per visit is never "used up". */
 export function isHistoryPack(treatment, now) {
   if (isJournal(treatment)) return false;
   return sessionsRemaining(treatment) === 0 || isExpiredPack(treatment, now);
@@ -237,7 +237,7 @@ export function packHistoryDate(treatment, now) {
 
 /**
  * Mixed History timeline: finished packs + completed sessions, newest first.
- * Journal visits are included as session rows. The journal itself stays on Home.
+ * Per visit rows are included as session rows. The Per visit card itself stays on Home.
  * Each row keeps packageId and kind so promo/paid balances stay unmerged.
  */
 export function buildHistoryTimeline(treatments, now) {

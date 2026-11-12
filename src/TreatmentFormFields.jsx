@@ -1,14 +1,14 @@
 /**
  * Shared fields for New Treatment and Edit Treatment.
- * Package keeps session count and expiry. Journal is a diary with neither.
+ * Package keeps session count and expiry. Per visit has neither.
  * One package type — no promo or paid choice.
  */
 import { switchTrackMode } from "./treatmentForm";
 
 const COPY = {
   package: "Package",
-  journal: "Journal",
-  helper: "No session count or expiry. Log visits whenever you go — like a diary.",
+  journal: "Per visit",
+  helper: "No session count or expiry. Log visits whenever you go.",
   howOften: "How often do you go?",
   howOftenOptional: "How often (optional)",
   whenever: "Whenever I go",

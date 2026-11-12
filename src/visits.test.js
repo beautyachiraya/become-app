@@ -42,6 +42,15 @@ describe("booking copy", () => {
     expect(BOOKING_COPY.en.booking_success_body).toBe("This isn't a confirmation from the clinic.");
     expect(BOOKING_COPY.en.booking_empty_body).toBe("We don't reserve the clinic's chair.");
     expect(BOOKING_COPY.en.booking_empty_title).toBe("No visits planned");
+    expect(BOOKING_COPY.en.booking_journal).toBe("Per visit");
+    expect(BOOKING_COPY.th.booking_journal).toBe("รายครั้ง");
+    Object.keys(BOOKING_COPY).forEach((lang) => {
+      Object.values(BOOKING_COPY[lang]).forEach((value) => {
+        expect(String(value)).not.toMatch(/\bjournal\b/i);
+        expect(String(value)).not.toMatch(/\bdiary\b/i);
+        expect(String(value)).not.toContain("ไดอารี่");
+      });
+    });
   });
 });
 

@@ -36,7 +36,7 @@ function formatDateOnly(date) {
   return `${y}-${m}-${d}`;
 }
 
-/** Open packages and active journals. Used-up and expired packages stay off the picker. */
+/** Open packages and active Per visit tracks. Used-up and expired packages stay off the picker. */
 export function packsForBooking(treatments, now) {
   return listOpenPacks(treatments, now);
 }

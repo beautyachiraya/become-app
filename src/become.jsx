@@ -74,7 +74,7 @@ const FREQUENCIES = [
   {label:"Every 6 months",days:180},{label:"Custom",days:null},
 ];
 const LANGUAGES = ["English","Thai — ภาษาไทย"];
-const T = {
+export const T = {
   en: {
     until_treatment: "Until my treatment",
     my_treatments: "My treatments",
@@ -92,9 +92,9 @@ const T = {
     booking_tab: "Booking",
     profile_tab: "Profile",
     history_title: "History",
-    history_lede: "Used-up and expired packages, journal visits, and the sessions you completed — newest first.",
+    history_lede: "Used-up and expired packages, visits from Per visit, and the sessions you completed — newest first.",
     history_empty_title: "Nothing in History yet.",
-    history_empty_sub: "When a package is used up or expires, it lands here. Journal visits show up here too — the journal itself stays on Home.",
+    history_empty_sub: "When a package is used up or expires, it lands here. Visits you log on Per visit show up here too — Per visit stays on Home.",
     booking_title: "Booking",
     used_up: "Used up",
     expired: "Expired",
@@ -105,9 +105,9 @@ const T = {
     completed_session: "Completed session",
     no_visits: "No visits logged",
     track_package: "Package",
-    track_journal: "Journal",
-    journal_helper: "No session count or expiry. Log visits whenever you go — like a diary.",
-    journal_chip: "Journal",
+    track_journal: "Per visit",
+    journal_helper: "No session count or expiry. Log visits whenever you go.",
+    journal_chip: "Per visit",
     no_visits_yet: "No visits yet",
     tap_to_log_visit: "Tap to log a visit",
     usually_prefix: "Usually",
@@ -119,8 +119,9 @@ const T = {
     journal_visit: "Visit",
     how_often_optional: "How often (optional)",
     whenever_i_go: "Whenever I go",
-    journal_add_sub: "A diary of visits — no session count, no expiry.",
-    edit_journal_sub: "Update your journal",
+    journal_add_sub: "Per visit — no session count, no expiry.",
+    edit_journal_sub: "Update your Per visit",
+    add_per_visit: "Add Per visit",
     ...BOOKING_COPY.en,
   },
   th: {
@@ -140,9 +141,9 @@ const T = {
     booking_tab: "จองคิว",
     profile_tab: "โปรไฟล์",
     history_title: "ประวัติ",
-    history_lede: "แพ็กเกจที่ใช้ครบหรือหมดอายุ บันทึกการไป และเซสชันที่ทำไปแล้ว — ใหม่สุดอยู่บน",
+    history_lede: "แพ็กเกจที่ใช้ครบหรือหมดอายุ การไปจากรายครั้ง และเซสชันที่ทำไปแล้ว — ใหม่สุดอยู่บน",
     history_empty_title: "ยังไม่มีประวัติ",
-    history_empty_sub: "เมื่อแพ็กเกจใช้ครบหรือหมดอายุ จะแสดงที่นี่ บันทึกการไปก็อยู่ที่นี่เช่นกัน — ตัวบันทึกยังอยู่ที่หน้าหลัก",
+    history_empty_sub: "เมื่อแพ็กเกจใช้ครบหรือหมดอายุ จะแสดงที่นี่ การไปที่บันทึกในรายครั้งก็อยู่ที่นี่เช่นกัน — รายครั้งยังอยู่ที่หน้าหลัก",
     booking_title: "จองคิว",
     used_up: "ใช้ครบแล้ว",
     expired: "หมดอายุ",
@@ -153,9 +154,9 @@ const T = {
     completed_session: "เซสชันที่ทำแล้ว",
     no_visits: "ยังไม่มีเซสชันที่บันทึก",
     track_package: "แพ็กเกจ",
-    track_journal: "บันทึก",
-    journal_helper: "ไม่มีจำนวนเซสชันหรือวันหมดอายุ บันทึกทุกครั้งที่ไปได้เลย — เหมือนไดอารี่",
-    journal_chip: "บันทึก",
+    track_journal: "รายครั้ง",
+    journal_helper: "ไม่มีจำนวนเซสชันหรือวันหมดอายุ บันทึกทุกครั้งที่ไปได้เลย",
+    journal_chip: "รายครั้ง",
     no_visits_yet: "ยังไม่เคยไป",
     tap_to_log_visit: "แตะเพื่อบันทึกการไป",
     usually_prefix: "ปกติ",
@@ -167,8 +168,9 @@ const T = {
     journal_visit: "การไป",
     how_often_optional: "ไปบ่อยแค่ไหน (ไม่บังคับ)",
     whenever_i_go: "เมื่อไรก็ได้",
-    journal_add_sub: "ไดอารี่การไปรับบริการ — ไม่มีจำนวนเซสชัน ไม่มีวันหมดอายุ",
-    edit_journal_sub: "แก้ไขบันทึกของคุณ",
+    journal_add_sub: "รายครั้ง — ไม่มีจำนวนเซสชัน ไม่มีวันหมดอายุ",
+    edit_journal_sub: "แก้ไขรายครั้งของคุณ",
+    add_per_visit: "เพิ่มรายครั้ง",
     ...BOOKING_COPY.th,
   },
 };
@@ -2220,7 +2222,7 @@ async function saveEditSession(){
                   labels={{package:t("track_package"),journal:t("track_journal"),helper:t("journal_helper"),howOftenOptional:t("how_often_optional"),whenever:t("whenever_i_go")}}
                   onSubmit={addTreatment}
                   isSaving={isSaving}
-                  submitLabel="Add to My Diary"
+                  submitLabel={form.trackMode==="journal"?t("add_per_visit"):t("add_treatment")}
                 />
               </div>
             </div>

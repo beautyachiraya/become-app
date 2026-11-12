@@ -176,6 +176,35 @@ describe("booking screen", () => {
     expect(html).not.toContain('placeholder="971501234567"');
   });
 
+  it("labels the no-expiry track Per visit on a planned visit", () => {
+    const perVisit = pack({
+      id: "j1",
+      name: "Botox",
+      clinic: "Glow Clinic",
+      trackMode: "journal",
+      status: "active",
+      totalSessions: null,
+      expiryDate: null,
+      sessions: [],
+    });
+    const html = visible(screen({
+      openPacks: [perVisit],
+      treatments: [perVisit],
+      visits: [{
+        id: "v1",
+        packageId: "j1",
+        clinicName: "Glow Clinic",
+        treatmentName: "Botox",
+        plannedAt: "2026-10-12",
+        status: "planned",
+      }],
+    }));
+    expect(html).toContain("Per visit");
+    expect(html).not.toMatch(/\bJournal\b/);
+    expect(html).not.toMatch(/\bDiary\b/);
+    expect(html).not.toMatch(/\d+ left/);
+  });
+
   it("shows the success note", () => {
     const html = visible(screen({ openPacks: [pack()], treatments: [pack()], initialNotice: true }));
     expect(html).toContain("Visit planned");

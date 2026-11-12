@@ -1,6 +1,7 @@
 /**
- * Home card and detail stats for a Journal treatment.
- * A journal never shows a remaining count, expiry, or Buy more.
+ * Home card and detail stats for a Per visit treatment.
+ * Per visit never shows a remaining count, expiry, or Buy more.
+ * Stored as trackMode "journal".
  */
 
 export function JournalHomeCard({
