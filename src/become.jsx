@@ -12,7 +12,7 @@ import {
 } from "./googleAuth";
 import { createDataClient, formatWriteError, formatProfilePhotoSaveError } from "./userData";
 import ProfileAvatarImage from "./profileAvatar";
-import { changeProfilePhoto, profileInitial, remotePhotoUrl } from "./profilePhoto";
+import { changeProfilePhoto, profileInitial, remotePhotoUrl, storePhotoOrInline, treatmentFitsFirestore, sessionPhotoTooLargeError, SESSION_PHOTO_MAX_EDGE, SESSION_PHOTO_MAX_BYTES } from "./profilePhoto";
 import { daysUntil, packSessionCounts, isHistoryPack, isNeedsAttention, buildHistoryTimeline, coerceSessions, appendSession, listOpenPacks, mergeTreatmentsById, normalizeTreatment, isJournal, lastSessionDate } from "./packageStatus";
 import { emptyTreatmentForm, buildNewTreatment, buildEditedTreatment, explicitPackKind } from "./treatmentForm";
 import TreatmentFormFields from "./TreatmentFormFields";
@@ -784,16 +784,23 @@ async function logSession(){
     setIsSaving(true);
     try{
       let photoURL=null;
-      if(logForm.photo&&user&&!logForm.photo.startsWith("https://")){
-        const blob=await fetch(logForm.photo).then(r=>r.blob());
-        const photoRef=ref(storage,`users/${user.uid}/photos/${Date.now()}`);
-        await uploadBytes(photoRef,blob);
-        photoURL=await getDownloadURL(photoRef);
+      if(logForm.photo&&user&&!String(logForm.photo).startsWith("https://")){
+        const stored=await storePhotoOrInline({
+          source:logForm.photo,
+          storageRef:()=>ref(storage,`users/${user.uid}/photos/${Date.now()}`),
+          upload:(pRef,nextFile)=>uploadBytes(pRef,nextFile),
+          downloadURL:getDownloadURL,
+          maxEdge:SESSION_PHOTO_MAX_EDGE,
+          maxBytes:SESSION_PHOTO_MAX_BYTES,
+        });
+        if(stored.error)throw stored.error;
+        photoURL=stored.photoURL;
       }else if(logForm.photo){
         photoURL=logForm.photo;
       }
       const newSession={id:Date.now(),date:logForm.date,note:logForm.note||"",photo:photoURL};
       const updatedT=appendSession(current,newSession);
+      if(!treatmentFitsFirestore(updatedT))throw sessionPhotoTooLargeError();
       if(user)await dataClient.writeTreatment(user.uid,updatedT);
       setTreatments(prev=>prev.map(t=>String(t.id)===String(selectedId)?updatedT:t));
       setSyncError("");
@@ -805,15 +812,42 @@ async function logSession(){
       setIsSaving(false);
     }
   }
-  function updatePhoto(photo){
-    setTreatments(prev=>prev.map(t=>{
-      if(String(t.id)!==String(selectedId))return t;
-      const sessions=coerceSessions(t.sessions);
-      const s2=[...sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
-      const target=s2[sessionIdx];
-      if(!target)return t;
-      return{...t,sessions:sessions.map(s=>s.id===target.id?{...s,photo}:s)};
-    }));
+  async function saveLoggedSessionPhoto(fileOrUrl){
+    const current=(treatmentsRef.current||[]).find(t=>String(t.id)===String(selectedId));
+    if(!current||sessionIdx===null)return;
+    const sessions=coerceSessions(current.sessions);
+    const sorted=[...sessions].sort((a,b)=>new Date(a.date)-new Date(b.date));
+    const target=sorted[sessionIdx];
+    if(!target)return;
+    const user=auth.currentUser;
+    const previous=target.photo||null;
+    setIsSaving(true);
+    try{
+      let photoURL=previous;
+      if(fileOrUrl&&user&&!(typeof fileOrUrl==="string"&&fileOrUrl.startsWith("https://"))){
+        const stored=await storePhotoOrInline({
+          source:fileOrUrl,
+          storageRef:()=>ref(storage,`users/${user.uid}/photos/${Date.now()}`),
+          upload:(pRef,nextFile)=>uploadBytes(pRef,nextFile),
+          downloadURL:getDownloadURL,
+          maxEdge:SESSION_PHOTO_MAX_EDGE,
+          maxBytes:SESSION_PHOTO_MAX_BYTES,
+        });
+        if(stored.error)throw stored.error;
+        photoURL=stored.photoURL;
+      }else if(typeof fileOrUrl==="string"&&fileOrUrl.startsWith("https://")){
+        photoURL=fileOrUrl;
+      }
+      const updatedT={...current,sessions:sessions.map(s=>s.id===target.id?{...s,photo:photoURL}:s)};
+      if(!treatmentFitsFirestore(updatedT))throw sessionPhotoTooLargeError();
+      if(user)await dataClient.writeTreatment(user.uid,updatedT);
+      setTreatments(prev=>prev.map(t=>String(t.id)===String(selectedId)?updatedT:t));
+      setSyncError("");
+    }catch(e){
+      showWriteError("Couldn't save this photo", e);
+    }finally{
+      setIsSaving(false);
+    }
   }
   async function addTreatment(){
     const newT=buildNewTreatment(form,{id:Date.now(),palette:(treatmentsRef.current||[]).length%PALETTE.length});
@@ -2131,7 +2165,7 @@ async function saveEditSession(){
                         Change photo
                       </button>
                       <input ref={editPhotoRef} type="file" accept="image/*" style={{display:"none"}}
-                        onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>updatePhoto(ev.target.result);r.readAsDataURL(f);}}/>
+                        onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;saveLoggedSessionPhoto(f);}}/>
                     </div>
                   ):(
                     <button onClick={()=>editPhotoRef.current&&editPhotoRef.current.click()}
@@ -2142,7 +2176,7 @@ async function saveEditSession(){
                       <p style={{fontSize:14,fontWeight:600,color:pal.text,fontFamily:"'DM Sans',sans-serif"}}>Add a photo</p>
                       <p style={{fontSize:12,color:"#9A8A78",fontFamily:"'DM Sans',sans-serif"}}>Capture your results or any reactions</p>
                       <input ref={editPhotoRef} type="file" accept="image/*" style={{display:"none"}}
-                        onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>updatePhoto(ev.target.result);r.readAsDataURL(f);}}/>
+                        onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f)return;saveLoggedSessionPhoto(f);}}/>
                     </button>
                   )}
                 </div>

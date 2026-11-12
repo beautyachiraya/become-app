@@ -175,3 +175,77 @@ export async function changeProfilePhoto({
     }
   }
 }
+
+export const SESSION_PHOTO_MAX_EDGE = 320;
+export const SESSION_PHOTO_MAX_BYTES = 80 * 1024;
+export const TREATMENT_DOC_SOFT_LIMIT = 900 * 1024;
+
+export function sessionPhotoTooLargeError() {
+  const error = new Error("That photo is too large to save with this package. Try a smaller picture.");
+  error.code = "become/treatment-too-large";
+  return error;
+}
+
+export function treatmentDocumentBytes(treatment) {
+  const json = JSON.stringify(treatment);
+  if (typeof Blob === "function") return new Blob([json]).size;
+  return unescape(encodeURIComponent(json)).length;
+}
+
+export function treatmentFitsFirestore(treatment, limit = TREATMENT_DOC_SOFT_LIMIT) {
+  return treatmentDocumentBytes(treatment) <= limit;
+}
+
+async function sourceToBlob(source) {
+  if (!source) throw new Error("Couldn't read that photo.");
+  if (typeof Blob !== "undefined" && source instanceof Blob) return source;
+  if (typeof source === "string") {
+    const res = await fetch(source);
+    const blob = await res.blob();
+    if (!blob) throw new Error("Couldn't read that photo.");
+    return blob;
+  }
+  throw new Error("Couldn't read that photo.");
+}
+
+/**
+ * Try Firebase Storage first. If the Spark bucket is over quota (or Storage
+ * is otherwise blocked), return a compressed data:image URL so the photo can
+ * be saved on a Firestore document instead. Used for session / visit photos
+ * as well as any other compact image that may be written to Firestore.
+ */
+export async function storePhotoOrInline({
+  source,
+  storageRef,
+  upload,
+  downloadURL,
+  compress,
+  maxEdge,
+  maxBytes,
+} = {}) {
+  let compact;
+  try {
+    const file = await sourceToBlob(source);
+    const run = compress || ((next) => compressProfilePhoto(next, {
+      maxEdge: maxEdge || SESSION_PHOTO_MAX_EDGE,
+      maxBytes: maxBytes || SESSION_PHOTO_MAX_BYTES,
+    }));
+    compact = await run(file);
+  } catch (error) {
+    return { photoURL: "", storedInline: false, error };
+  }
+  const fallbackUrl = remotePhotoUrl(compact && compact.dataUrl);
+  const uploadFile = (compact && compact.blob) || source;
+  try {
+    const storedRef = typeof storageRef === "function" ? storageRef() : storageRef;
+    await upload(storedRef, uploadFile);
+    const url = remotePhotoUrl(await downloadURL(storedRef));
+    if (!url) throw new Error("No download link came back.");
+    return { photoURL: url, storedInline: false, error: null };
+  } catch (error) {
+    if (!isProfilePhotoStorageBlocked(error) || !fallbackUrl) {
+      return { photoURL: "", storedInline: false, error };
+    }
+    return { photoURL: fallbackUrl, storedInline: true, error: null };
+  }
+}
