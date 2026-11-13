@@ -1,10 +1,13 @@
 /**
  * Booking v1. The user plans their own visit against an open package.
- * Message opens LINE or WhatsApp. Done hands off to Log Session.
+ * Saving prepares a message they copy into LINE or another chat themselves.
+ * The Message button still opens LINE or WhatsApp only when they tap it.
+ * Done hands off to Log Session.
  * Nothing on this screen tells the user the clinic has confirmed a chair.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  bookingSummaryText,
   buildVisit,
   clinicContact,
   draftMessage,
@@ -14,14 +17,14 @@ import {
   isAfterExpiry,
   messageUrl,
   packSummary,
-  resolveBookingUrl,
+  preferredBranch,
   sessionsLeftText,
   splitPlannedAt,
   suggestNextDate,
   upcomingVisits,
-  cleanBookingUrl,
   bookingPackOptionLabel,
 } from "./visits";
+import { copyPlainText } from "./copyText";
 import { TAB_CLEARANCE } from "./shellLayout";
 import { FIGURE_INK, Numeral, dateInputStyle } from "./figureType";
 
@@ -40,7 +43,7 @@ function findPack(list, id) {
   return (list || []).find((pack) => String(pack.id) === String(id)) || null;
 }
 
-function blankForm(openPacks, profile) {
+function blankForm(openPacks) {
   const only = openPacks.length === 1 ? openPacks[0] : null;
   return {
     id: "",
@@ -49,14 +52,13 @@ function blankForm(openPacks, profile) {
     time: "",
     notes: "",
     remind: true,
-    messageAfter: false,
-    bookingUrl: only ? (resolveBookingUrl(only, profile) || "") : "",
+    branch: only ? preferredBranch(only) : "",
     dateTouched: false,
-    linkTouched: false,
+    branchTouched: false,
   };
 }
 
-function formFromVisit(visit, packs, profile) {
+function formFromVisit(visit, packs) {
   const split = splitPlannedAt(visit.plannedAt);
   const pack = findPack(packs, visit.packageId);
   return {
@@ -66,10 +68,9 @@ function formFromVisit(visit, packs, profile) {
     time: split.time,
     notes: visit.notes || "",
     remind: Boolean(visit.remindAt),
-    messageAfter: false,
-    bookingUrl: visit.bookingUrl || resolveBookingUrl(pack, profile) || "",
+    branch: preferredBranch(visit, pack),
     dateTouched: true,
-    linkTouched: Boolean(visit.bookingUrl),
+    branchTouched: Boolean(preferredBranch(visit)),
   };
 }
 
@@ -98,9 +99,9 @@ export function BookingScreen({
   initialContact = null,
 }) {
   const [sheet, setSheet] = useState(initialSheet);
-  const [form, setForm] = useState(() => initialForm || blankForm(openPacks, profile));
+  const [form, setForm] = useState(() => initialForm || blankForm(openPacks));
   const [notice, setNotice] = useState(Boolean(initialNotice));
-  const [pendingUrl, setPendingUrl] = useState("");
+  const [savedSummary, setSavedSummary] = useState(null);
   const [menuId, setMenuId] = useState(initialMenuId);
   const [confirmId, setConfirmId] = useState(null);
   const [contact, setContact] = useState(initialContact);
@@ -119,14 +120,18 @@ export function BookingScreen({
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  const summaryText = savedSummary
+    ? bookingSummaryText({ locale, profile, ...savedSummary })
+    : "";
+
   function openPlan() {
-    setForm(blankForm(openPacks, profile));
+    setForm(blankForm(openPacks));
     setMenuId(null);
     setSheet("plan");
   }
 
   function startEdit(visit) {
-    setForm(formFromVisit(visit, treatments.length ? treatments : openPacks, profile));
+    setForm(formFromVisit(visit, treatments.length ? treatments : openPacks));
     setMenuId(null);
     setConfirmId(null);
     setSheet("plan");
@@ -170,12 +175,10 @@ export function BookingScreen({
           <div role="status" data-testid="visit-success" className="card" style={{ padding: "18px 18px", marginBottom: 14, background: "#FDF9F3" }}>
             <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 400 }}>{t("booking_success_title")}</p>
             <p style={{ fontSize: 13, color: "#7A6A58", marginTop: 6, lineHeight: 1.55 }}>{t("booking_success_body")}</p>
-            {pendingUrl ? (
-              <a href={pendingUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 12, color: "#B4915F", fontSize: 13, fontWeight: 600 }}>
-                {t("booking_open_chat")}
-              </a>
+            {summaryText ? (
+              <ClinicMessage t={t} text={summaryText} testId="booking-summary" />
             ) : null}
-            <button type="button" onClick={() => { setNotice(false); setPendingUrl(""); }}
+            <button type="button" onClick={() => { setNotice(false); setSavedSummary(null); }}
               style={{ display: "block", marginTop: 12, background: "none", border: "none", color: "#9A8A78", fontSize: 13, fontFamily: "inherit", cursor: "pointer", fontWeight: 500, padding: 0 }}>
               {t("booking_dismiss")}
             </button>
@@ -230,7 +233,7 @@ export function BookingScreen({
                 onKeep={() => setConfirmId(null)}
                 onCancel={() => {
                   setNotice(false);
-                  setPendingUrl("");
+                  setSavedSummary(null);
                   if (onCancelVisit) onCancelVisit(visit);
                 }}
                 onMessage={() => {
@@ -245,7 +248,7 @@ export function BookingScreen({
                 }}
                 onDone={() => {
                   setNotice(false);
-                  setPendingUrl("");
+                  setSavedSummary(null);
                   if (onCompleteVisit) onCompleteVisit(visit);
                 }}
               />
@@ -287,15 +290,12 @@ export function BookingScreen({
           setForm={setForm}
           openPacks={openPacks}
           treatments={treatments}
-          profile={profile}
           isSaving={isSaving}
           onClose={() => { if (!isSaving) setSheet(null); }}
           onSave={async (event) => {
             event.preventDefault();
             const pack = findPack(openPacks, form.packageId) || findPack(treatments, form.packageId);
             if (!pack || !form.date) return;
-            const linkError = form.bookingUrl && !cleanBookingUrl(form.bookingUrl);
-            if (linkError) return;
             const existing = form.id ? upcoming.find((visit) => String(visit.id) === String(form.id)) : null;
             const visit = buildVisit({
               id: form.id,
@@ -305,38 +305,20 @@ export function BookingScreen({
               time: form.time,
               notes: form.notes,
               remind: form.remind,
-              bookingUrl: form.bookingUrl,
+              branch: form.branch,
               channel,
             });
             if (!visit) return;
-            const text = draftMessage({ pack, plannedAt: visit.plannedAt, locale });
-            const url = form.messageAfter && channel !== "none"
-              ? messageUrl({ channel, contact: clinicContact(pack, profile), text })
-              : null;
-            let preopened = null;
-            if (url && !onOpenUrl) {
-              preopened = window.open("", "_blank");
-              if (preopened) preopened.opener = null;
-            }
             const ok = onSaveVisit ? await onSaveVisit(visit) : false;
-            if (!ok) {
-              if (preopened) preopened.close();
-              return;
-            }
+            if (!ok) return;
+            setSavedSummary({
+              pack,
+              visit,
+              branch: form.branch,
+              date: form.date,
+              time: form.time,
+            });
             setNotice(true);
-            if (url) {
-              if (preopened) preopened.location.href = url;
-              else if (onOpenUrl) onOpenUrl(url);
-              setPendingUrl(url);
-              setSheet(null);
-              return;
-            }
-            if (preopened) preopened.close();
-            if (form.messageAfter) {
-              setContact({ pack, text, lineOaId: "", whatsappPhone: "" });
-              setSheet("contact");
-              return;
-            }
             setSheet(null);
           }}
         />
@@ -445,7 +427,7 @@ function VisitCard({
   const tone = palette(pack || { palette: 0 });
   const when = formatVisitWhen(visit.plannedAt, locale);
   const left = summary && !summary.journal ? sessionsLeftText(summary.sessionsLeft, locale) : "";
-  const page = resolveBookingUrl(pack, profile, visit);
+  const message = bookingSummaryText({ locale, profile, pack, visit });
   const label = statusLabel(visit.status, t);
 
   return (
@@ -464,11 +446,6 @@ function VisitCard({
             </p>
             {left ? <Numeral as="p" size={13} style={{ marginTop: 6 }}>{left}</Numeral> : null}
             {summary && summary.journal ? <p style={{ fontSize: 12, color: "#8C6E40", fontWeight: 600, marginTop: 6 }}>{t("booking_journal")}</p> : null}
-            {page ? (
-              <a href={page} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8, fontSize: 12, color: "#B4915F", fontWeight: 600 }}>
-                {t("booking_open_page")}
-              </a>
-            ) : null}
           </div>
         </div>
         {!quiet && (
@@ -487,7 +464,10 @@ function VisitCard({
         )}
       </div>
       {!quiet && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 14 }}>
+        <ClinicMessage t={t} text={message} testId="visit-summary" compact />
+      )}
+      {!quiet && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
           <button type="button" className="btn btn-g" style={{ padding: "10px 14px" }} disabled={isSaving} onClick={onMessage}>{t("booking_message")}</button>
           <button type="button" className="btn btn-g" data-testid="visit-done" style={{ padding: "10px 14px" }} disabled={isSaving} onClick={onDone}>{t("booking_mark_done")}</button>
         </div>
@@ -519,6 +499,81 @@ const menuItem = {
   cursor: "pointer",
 };
 
+function ClinicMessage({ t, text, testId, compact }) {
+  const [draft, setDraft] = useState(text || "");
+  const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const areaRef = useRef(null);
+  const detailsRef = useRef(null);
+  useEffect(() => {
+    setDraft(text || "");
+    setCopied(false);
+    setFailed(false);
+  }, [text]);
+
+  async function copy() {
+    const ok = await copyPlainText(draft);
+    setCopied(ok);
+    setFailed(!ok);
+    if (!ok) {
+      if (detailsRef.current) detailsRef.current.open = true;
+      if (areaRef.current) {
+        areaRef.current.focus();
+        if (typeof areaRef.current.select === "function") areaRef.current.select();
+      }
+    }
+  }
+
+  const field = (
+    <textarea
+      ref={areaRef}
+      className="inp"
+      rows={compact ? 6 : 9}
+      value={draft}
+      data-testid={testId}
+      aria-label={t("booking_summary_label")}
+      spellCheck={false}
+      autoCapitalize="off"
+      autoCorrect="off"
+      onChange={(event) => {
+        setDraft(event.target.value);
+        setCopied(false);
+        setFailed(false);
+      }}
+      style={{ marginTop: compact ? 8 : 0, fontSize: 16, lineHeight: 1.45 }}
+    />
+  );
+
+  return (
+    <div data-testid={`${testId}-block`} style={{ marginTop: 14 }}>
+      {compact ? (
+        <button type="button" className="btn btn-c" data-testid={`copy-${testId}`} onClick={copy}>
+          {copied ? t("booking_copied") : t("booking_copy")}
+        </button>
+      ) : null}
+      {compact ? (
+        <details ref={detailsRef} style={{ marginTop: 8 }}>
+          <summary style={{ fontSize: 13, color: "#B4915F", fontWeight: 600, cursor: "pointer" }}>{t("booking_summary_label")}</summary>
+          {field}
+        </details>
+      ) : (
+        <div>
+          <span className="lbl">{t("booking_summary_label")}</span>
+          {field}
+        </div>
+      )}
+      {compact ? null : (
+        <button type="button" className="btn btn-c" data-testid={`copy-${testId}`} onClick={copy} style={{ marginTop: 10 }}>
+          {copied ? t("booking_copied") : t("booking_copy")}
+        </button>
+      )}
+      <p role={failed ? "alert" : undefined} style={{ fontSize: 12, color: failed ? "#C05858" : "#9A8A78", marginTop: 8, lineHeight: 1.45 }}>
+        {failed ? t("booking_copy_failed") : t("booking_summary_hint")}
+      </p>
+    </div>
+  );
+}
+
 function PlanSheet({
   t,
   locale,
@@ -526,7 +581,6 @@ function PlanSheet({
   setForm,
   openPacks,
   treatments,
-  profile,
   isSaving,
   onClose,
   onSave,
@@ -539,18 +593,17 @@ function PlanSheet({
   const selected = findPack(pickerPacks, form.packageId);
   const summary = packSummary(selected);
   const suggested = selected ? suggestNextDate(selected) : null;
-  const linkError = Boolean(form.bookingUrl && !cleanBookingUrl(form.bookingUrl));
   const expiryWarn = Boolean(
     summary && !summary.journal && summary.expiryDate && isAfterExpiry(form.date, summary.expiryDate)
   );
-  const canSave = Boolean(selected && form.date) && !linkError && !isSaving;
+  const canSave = Boolean(selected && form.date) && !isSaving;
 
   function selectPack(id) {
     const pack = findPack(pickerPacks, id);
     setForm((prev) => {
       const next = { ...prev, packageId: id };
       if (!prev.dateTouched) next.date = (pack && suggestNextDate(pack)) || "";
-      if (!prev.linkTouched) next.bookingUrl = (pack && resolveBookingUrl(pack, profile)) || "";
+      if (!prev.branchTouched) next.branch = preferredBranch(pack);
       return next;
     });
   }
@@ -633,19 +686,14 @@ function PlanSheet({
             {t("booking_remind")}
           </label>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
-            <input type="checkbox" checked={form.messageAfter} onChange={(event) => setForm((prev) => ({ ...prev, messageAfter: event.target.checked }))} />
-            {t("booking_message_after")}
-          </label>
-
           <div>
-            <span className="lbl">{t("booking_link")}</span>
-            <input className={`inp${linkError ? " invalid" : ""}`} type="url" inputMode="url" placeholder="https://" value={form.bookingUrl}
-              onChange={(event) => setForm((prev) => ({ ...prev, bookingUrl: event.target.value, linkTouched: true }))} />
-            <p style={{ fontSize: 12, color: linkError ? "#C05858" : "#9A8A78", marginTop: 6, lineHeight: 1.45 }}>
-              {linkError ? t("booking_link_invalid") : t("booking_link_hint")}
-            </p>
+            <span className="lbl">{t("booking_branch")}</span>
+            <input className="inp" data-testid="visit-branch" value={form.branch || ""} placeholder={t("booking_branch_ph")}
+              onChange={(event) => setForm((prev) => ({ ...prev, branch: event.target.value, branchTouched: true }))} />
+            <p style={{ fontSize: 12, color: "#9A8A78", marginTop: 6, lineHeight: 1.45 }}>{t("booking_branch_hint")}</p>
           </div>
+
+          <p style={{ fontSize: 12, color: "#9A8A78", lineHeight: 1.45 }}>{t("booking_message_after")}</p>
 
           <button type="submit" className="btn btn-c" data-testid="save-visit" disabled={!canSave}>
             {isSaving ? t("booking_saving") : t("booking_save")}
