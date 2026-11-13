@@ -8,7 +8,7 @@ describe("journal home card", () => {
         name="Botox"
         clinic="Glow Clinic"
         icon="◈"
-        palette={{ bg: "#FDF4EE", accent: "#D49068" }}
+        palette={{ bg: "#FDF4EE", accent: "#D49068", text: "#A05830" }}
         chip="Per visit"
         lastVisitLabel="Last visit"
         lastVisitText="No visits yet"
@@ -42,6 +42,13 @@ describe("journal home card", () => {
     expect(html).toContain("12 Sep");
     expect(html).toContain("Usually monthly");
     expect(html).not.toContain("No visits yet");
+    const numeral = html.match(/data-numeral="lining"[^>]*>/);
+    expect(numeral).not.toBeNull();
+    expect(numeral[0]).toContain("DM Sans");
+    expect(numeral[0]).toContain("lining-nums");
+    expect(numeral[0]).toContain("#A05830");
+    expect(numeral[0]).not.toContain("Cormorant");
+    expect(numeral[0]).not.toContain("#D49068");
   });
 });
 
@@ -53,7 +60,7 @@ describe("journal detail", () => {
         lastVisitText="16 Sep 2026"
         nextSuggestedText="16 Oct"
         labels={{ visits: "Visits logged", lastVisit: "Last visit", next: "Next suggested" }}
-        accent="#D49068"
+        ink="#504098"
       />
     );
     const visits = renderToStaticMarkup(
@@ -71,6 +78,12 @@ describe("journal detail", () => {
     const html = stats + visits;
     expect(html).toContain("Visits logged");
     expect(html).toContain(">2<");
+    expect(html).toContain('data-numeral="lining"');
+    expect(html).toContain("DM Sans");
+    expect(html).toContain("lining-nums");
+    expect(html).toContain("#504098");
+    expect(html).not.toContain("Cormorant");
+    expect(html).not.toContain("#8870C8");
     expect(html).toContain("Last visit");
     expect(html).toContain("Next suggested");
     expect(html).toContain("Log visit");

@@ -3,6 +3,7 @@
  * Per visit never shows a remaining count, expiry, or Buy more.
  * Stored as trackMode "journal".
  */
+import { FIGURE_INK, Numeral, figureInk } from "./figureType";
 
 export function JournalHomeCard({
   name,
@@ -43,7 +44,7 @@ export function JournalHomeCard({
         </div>
         <div style={{ textAlign: "right", marginLeft: 8, flexShrink: 0, maxWidth: 128 }}>
           <p style={{ fontSize: 9, color: "#C4B8A8", fontWeight: 600, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 4 }}>{lastVisitLabel}</p>
-          <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 18, fontWeight: 400, color: p.accent, lineHeight: 1.2 }}>{lastVisitText}</p>
+          <Numeral as="p" color={figureInk(p)} size={16} style={{ lineHeight: 1.3, textAlign: "right" }}>{lastVisitText}</Numeral>
         </div>
       </div>
       <div style={{ height: 1, background: `linear-gradient(90deg,transparent,${p.accent}20,transparent)`, margin: "16px 0" }} />
@@ -52,7 +53,7 @@ export function JournalHomeCard({
   );
 }
 
-export function JournalDetailStats({ visitCount, lastVisitText, nextSuggestedText, labels, accent }) {
+export function JournalDetailStats({ visitCount, lastVisitText, nextSuggestedText, labels, ink }) {
   const cells = [
     { label: labels.visits, value: visitCount },
     { label: labels.lastVisit, value: lastVisitText },
@@ -62,7 +63,7 @@ export function JournalDetailStats({ visitCount, lastVisitText, nextSuggestedTex
     <div data-testid="journal-stats" style={{ display: "grid", gridTemplateColumns: `repeat(${cells.length},1fr)`, gap: 10, marginTop: 24 }}>
       {cells.map((cell) => (
         <div key={cell.label} className="card" style={{ padding: "14px 10px", textAlign: "center" }}>
-          <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: typeof cell.value === "number" ? 30 : 15, fontWeight: 400, color: accent || "#B4915F", lineHeight: 1.2 }}>{cell.value}</p>
+          <Numeral as="p" color={ink || FIGURE_INK} size={typeof cell.value === "number" ? 28 : 15} style={{ lineHeight: 1.25 }}>{cell.value}</Numeral>
           <p style={{ fontSize: 10, color: "#9A8A78", fontWeight: 600, letterSpacing: 1.2, textTransform: "uppercase", marginTop: 4 }}>{cell.label}</p>
         </div>
       ))}
@@ -88,7 +89,7 @@ export function JournalVisitList({
       {nextSuggestedText ? (
         <div style={{ background: soft || "#F5EFE6", borderRadius: 20, padding: "20px", border: "1px solid rgba(180,145,95,0.15)", marginBottom: 16 }}>
           <p style={{ fontSize: 10, fontWeight: 600, color: "#8C6E40", letterSpacing: 2, textTransform: "uppercase", marginBottom: 6 }}>{nextLabel}</p>
-          <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 24, fontWeight: 400 }}>{nextSuggestedText}</p>
+          <Numeral as="p" size={22}>{nextSuggestedText}</Numeral>
           {usually ? <p style={{ fontSize: 12, color: "#9A8A78", marginTop: 4 }}>{usually}</p> : null}
         </div>
       ) : null}
@@ -103,7 +104,7 @@ export function JournalVisitList({
             onClick={() => onOpenVisit && onOpenVisit(index)}
             style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", borderBottom: index === visits.length - 1 ? "none" : "1px solid rgba(180,145,95,0.1)", padding: "14px 0", cursor: "pointer", fontFamily: "inherit" }}
           >
-            <p style={{ fontSize: 14, fontWeight: 600, color: "#1C1612" }}>{visit.dateText}</p>
+            <Numeral as="p" size={14}>{visit.dateText}</Numeral>
             {visit.note ? <p style={{ fontSize: 12, color: "#7A6A58", marginTop: 4 }}>{visit.note}</p> : null}
           </button>
         ))}

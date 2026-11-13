@@ -23,6 +23,7 @@ import {
   bookingPackOptionLabel,
 } from "./visits";
 import { TAB_CLEARANCE } from "./shellLayout";
+import { FIGURE_INK, Numeral, dateInputStyle } from "./figureType";
 
 const STATUS_KEY = {
   planned: "booking_planned",
@@ -457,8 +458,11 @@ function VisitCard({
           <div style={{ minWidth: 0 }}>
             <span className="pill pill-c" data-testid="visit-status">{label}</span>
             <p style={{ fontSize: 15, fontWeight: 600, marginTop: 8 }}>{visit.treatmentName}</p>
-            <p style={{ fontSize: 12, color: "#9A8A78", marginTop: 2 }}>{[visit.clinicName, when].filter(Boolean).join(" · ")}</p>
-            {left ? <p style={{ fontSize: 12, color: "#8C6E40", fontWeight: 600, marginTop: 6 }}>{left}</p> : null}
+            <p style={{ fontSize: 12, color: "#9A8A78", marginTop: 2 }}>
+              {visit.clinicName}
+              {when ? <> · <Numeral size={13} style={{ fontWeight: 600 }}>{when}</Numeral></> : null}
+            </p>
+            {left ? <Numeral as="p" size={13} style={{ marginTop: 6 }}>{left}</Numeral> : null}
             {summary && summary.journal ? <p style={{ fontSize: 12, color: "#8C6E40", fontWeight: 600, marginTop: 6 }}>{t("booking_journal")}</p> : null}
             {page ? (
               <a href={page} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8, fontSize: 12, color: "#B4915F", fontWeight: 600 }}>
@@ -587,11 +591,11 @@ function PlanSheet({
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                 {summary.kind ? <span className={`pill ${summary.kind === "promo" ? "pill-promo" : "pill-paid"}`}>{t(summary.kind)}</span> : null}
                 {summary.journal ? <span className="pill pill-journal">{t("booking_journal")}</span> : (
-                  <span className="pill pill-c">{sessionsLeftText(summary.sessionsLeft, locale)}</span>
+                  <span className="pill pill-c num" style={{ color: FIGURE_INK }}>{sessionsLeftText(summary.sessionsLeft, locale)}</span>
                 )}
               </div>
               {!summary.journal && (
-                <p style={{ fontSize: 12, color: "#9A8A78", marginTop: 8 }}>
+                <p className="num" style={{ fontSize: 13, color: FIGURE_INK, marginTop: 8, fontWeight: 500 }}>
                   {t("booking_sessions_left")}: {summary.sessionsLeft}
                   {summary.expiryDate ? ` · ${t("booking_expires")} ${formatDateLabel(summary.expiryDate, locale)}` : ""}
                 </p>
@@ -601,7 +605,7 @@ function PlanSheet({
 
           <div>
             <span className="lbl">{t("booking_date")}</span>
-            <input className="inp" type="date" required value={form.date}
+            <input className="inp num" type="date" required value={form.date} style={dateInputStyle}
               onChange={(event) => setForm((prev) => ({ ...prev, date: event.target.value, dateTouched: true }))} />
             {suggested && form.date === suggested ? (
               <p style={{ fontSize: 12, color: "#9A8A78", marginTop: 6, lineHeight: 1.45 }}>{t("booking_suggest_hint")}</p>
@@ -613,7 +617,7 @@ function PlanSheet({
 
           <div>
             <span className="lbl">{t("booking_time")}</span>
-            <input className="inp" type="time" value={form.time}
+            <input className="inp num" type="time" value={form.time} style={dateInputStyle}
               onChange={(event) => setForm((prev) => ({ ...prev, time: event.target.value }))} />
             <p style={{ fontSize: 12, color: "#9A8A78", marginTop: 6 }}>{t("booking_time_hint")}</p>
           </div>

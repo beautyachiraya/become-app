@@ -4,6 +4,7 @@
  * One package type — no promo or paid choice.
  */
 import { switchTrackMode } from "./treatmentForm";
+import { dateInputStyle } from "./figureType";
 
 const COPY = {
   package: "Package",
@@ -118,21 +119,23 @@ export default function TreatmentFormFields({
           <div>
             <span className="lbl">Total sessions</span>
             <input
-              className="inp"
+              className="inp num"
               type="number"
               min="1"
               placeholder="e.g. 6"
               value={form.totalSessions}
               onChange={(e) => setForm({ ...form, totalSessions: e.target.value })}
+              style={dateInputStyle}
             />
           </div>
           <div>
             <span className="lbl">Expiry date</span>
             <input
-              className="inp"
+              className="inp num"
               type="date"
               value={form.expiryDate}
               onChange={(e) => setForm({ ...form, expiryDate: e.target.value })}
+              style={dateInputStyle}
             />
           </div>
         </div>
@@ -166,11 +169,12 @@ export default function TreatmentFormFields({
         <div>
           <span className="lbl">Every how many days?</span>
           <input
-            className="inp"
+            className="inp num"
             type="number"
             placeholder="e.g. 45"
             value={form.customDays}
             onChange={(e) => setForm({ ...form, customDays: e.target.value })}
+            style={dateInputStyle}
           />
         </div>
       )}
