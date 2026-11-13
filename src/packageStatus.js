@@ -8,7 +8,8 @@
  *   remaining  = totalSessions - sessions.length
  *   expired    = expiryDate is in the past
  *   open/Home  = remaining > 0 AND not expired
- *   history    = remaining === 0 (used up) OR expired
+ *   history    = the package card moves when remaining === 0 (used up) OR expired
+ *   sessions from a still-open package are also listed in History as soon as they are saved
  *
  * Per visit (stored as trackMode "journal"):
  *   sessionsTotal / sessionsRemaining / expiresAt stay null
@@ -235,60 +236,54 @@ export function packHistoryDate(treatment, now) {
   return last || expiry || "";
 }
 
+function pushSessionRows(items, pack, trackMode) {
+  const visits = sessionsWithPackageId(pack)
+    .slice()
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  visits.forEach((session, idx) => {
+    items.push({
+      type: "session",
+      id: `session-${pack.id}-${session.id}`,
+      date: session.date,
+      packageId: pack.id,
+      kind: packKind(pack),
+      trackMode,
+      pack,
+      session,
+      sessionIndex: idx,
+    });
+  });
+}
+
 /**
- * Mixed History timeline: finished packs + completed sessions, newest first.
- * Per visit rows are included as session rows. The Per visit card itself stays on Home.
+ * Mixed History timeline: finished packs + every completed session, newest first.
+ * Sessions from a still-open package are listed as soon as they are saved.
+ * The open package card itself stays on Home. Per visit rows are session rows only.
  * Each row keeps packageId and kind so promo/paid balances stay unmerged.
  */
 export function buildHistoryTimeline(treatments, now) {
   const items = [];
   (treatments || []).filter((pack) => isHistoryPack(pack, now)).forEach((pack) => {
-    const kind = packKind(pack);
-    const visits = sessionsWithPackageId(pack)
-      .slice()
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
     items.push({
       type: "pack",
       id: `pack-${pack.id}`,
       date: packHistoryDate(pack, now),
       packageId: pack.id,
-      kind,
+      kind: packKind(pack),
       trackMode: "package",
       usedUp: sessionsRemaining(pack) === 0,
       expired: isExpiredPack(pack, now),
       pack,
     });
-    visits.forEach((session, idx) => {
-      items.push({
-        type: "session",
-        id: `session-${pack.id}-${session.id}`,
-        date: session.date,
-        packageId: pack.id,
-        kind,
-        trackMode: "package",
-        pack,
-        session,
-        sessionIndex: idx,
-      });
-    });
+    pushSessionRows(items, pack, "package");
   });
-  (treatments || []).filter((pack) => isJournal(pack) && pack.status !== "removed").forEach((pack) => {
-    const visits = sessionsWithPackageId(pack)
-      .slice()
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
-    visits.forEach((session, idx) => {
-      items.push({
-        type: "session",
-        id: `session-${pack.id}-${session.id}`,
-        date: session.date,
-        packageId: pack.id,
-        kind: packKind(pack),
-        trackMode: "journal",
-        pack,
-        session,
-        sessionIndex: idx,
-      });
+  (treatments || [])
+    .filter((pack) => !isJournal(pack) && !isHistoryPack(pack, now))
+    .forEach((pack) => {
+      pushSessionRows(items, pack, "package");
     });
+  (treatments || []).filter((pack) => isJournal(pack) && pack.status !== "removed").forEach((pack) => {
+    pushSessionRows(items, pack, "journal");
   });
   items.sort((a, b) => {
     const dt = new Date(b.date || 0) - new Date(a.date || 0);

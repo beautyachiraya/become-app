@@ -4,6 +4,9 @@ import {
   cancelVisit,
   clinicContact,
   completeVisit,
+  formatCustomerDate,
+  bookingPackOptionLabel,
+  visitAfterLogAttempt,
   draftMessage,
   earlierVisits,
   isAfterExpiry,
@@ -179,6 +182,26 @@ describe("message clinic", () => {
   });
 });
 
+describe("customer dates", () => {
+  it("includes the year in English and Thai", () => {
+    expect(formatCustomerDate("2026-11-12", "en")).toBe("12 Nov 2026");
+    expect(formatCustomerDate("2027-05-12", "en")).toBe("12 May 2027");
+    expect(formatCustomerDate("2027-05-12", "th")).toBe("12 พ.ค. 2027");
+    expect(formatCustomerDate("", "en")).toBe("—");
+  });
+
+  it("puts the year first in the booking package menu so a narrow select cannot clip it", () => {
+    const label = bookingPackOptionLabel({
+      treatmentName: "Hydrafacial",
+      sessionsLeftText: "2 left",
+      expiryLabel: "12 May 2027",
+    });
+    expect(label.startsWith("12 May 2027")).toBe(true);
+    expect(label).toContain("2027");
+    expect(label.indexOf("2027")).toBeLessThan(label.indexOf("Hydrafacial"));
+  });
+});
+
 describe("visit status", () => {
   it("only keeps planned, canceled, or completed", () => {
     const coerced = normalizeVisit({ id: "v9", status: "confirmed", packageId: 3, treatmentName: "Botox" });
@@ -193,5 +216,17 @@ describe("visit status", () => {
       cancelVisit({ ...planned, id: "v2" }),
       { ...planned, id: "v3", status: "confirmed" },
     ]).map((v) => v.status).sort()).toEqual(["canceled", "completed"]);
+  });
+
+  it("keeps a planned visit planned until the log is saved", () => {
+    const planned = buildVisit({ id: "v1", pack: pack(), date: "2026-12-12", channel: "line" });
+    const dismissed = visitAfterLogAttempt(planned, false);
+    expect(dismissed.status).toBe("planned");
+    expect(upcomingVisits([dismissed]).map((v) => v.id)).toEqual(["v1"]);
+    expect(earlierVisits([dismissed])).toEqual([]);
+    const saved = visitAfterLogAttempt(planned, true);
+    expect(saved.status).toBe("completed");
+    expect(upcomingVisits([saved])).toEqual([]);
+    expect(earlierVisits([saved]).map((v) => v.status)).toEqual(["completed"]);
   });
 });

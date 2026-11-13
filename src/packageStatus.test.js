@@ -243,11 +243,30 @@ describe("history timeline", () => {
       sessions: [{ id: 1, date: "2026-08-01", note: "Forehead" }],
     };
     const items = buildHistoryTimeline([journal, pack()], NOW);
-    expect(items.map((row) => row.type + ":" + row.packageId)).toEqual(["session:j"]);
+    expect(items.map((row) => row.type + ":" + row.packageId)).toEqual(["session:j", "session:1"]);
     expect(items[0].trackMode).toBe("journal");
     expect(items[0].session.packageId).toBe("j");
     expect(isHistoryPack(journal, NOW)).toBe(false);
     expect(isOpenPack(journal, NOW)).toBe(true);
+  });
+
+  it("lists a completed session from a package that still has sessions left", () => {
+    const open = pack({
+      id: "hf",
+      name: "Hydrafacial",
+      clinic: "Glow Test Clinic",
+      totalSessions: 3,
+      expiryDate: "2027-05-12",
+      sessions: [{ id: 1, date: "2026-08-02", note: "Session 1" }],
+    });
+    expect(isOpenPack(open, NOW)).toBe(true);
+    expect(isHistoryPack(open, NOW)).toBe(false);
+    const items = buildHistoryTimeline([open], NOW);
+    expect(items.map((row) => row.type)).toEqual(["session"]);
+    expect(items[0].trackMode).toBe("package");
+    expect(items[0].session.note).toBe("Session 1");
+    expect(items[0].packageId).toBe("hf");
+    expect(items[0].session.packageId).toBe("hf");
   });
 });
 
