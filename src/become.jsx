@@ -2324,6 +2324,9 @@ async function saveEditSession(){
                     <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,lineHeight:1.1}}>{sel.name}</h2>
                     <p style={{fontSize:13,color:"#9A8A78",marginTop:4}}>{sel.clinic}</p>
                     {sel.brandUnit&&<p style={{fontSize:12,color:"#B4915F",fontWeight:500,marginTop:2}}>{sel.brandUnit}</p>}{sel.notes&&<p style={{fontSize:12,color:"#C4B8A8",fontStyle:"italic",marginTop:2}}>{sel.notes}</p>}
+                    {!isJournal(sel)&&selCounts.remaining===0&&(
+                      <span className="pill pill-done" style={{marginTop:8,display:"inline-flex"}}>{t("used_up")}</span>
+                    )}
                   </div>
                 </div>
                 {isJournal(sel)?(
@@ -2452,6 +2455,12 @@ async function saveEditSession(){
                         + {t("log_session_title")} {selCounts.used+1}
                       </button>
                     )}
+                    {selCounts.remaining===0&&(
+                      <button className="btn btn-g" data-testid="detail-buy-more" style={{marginBottom:16}}
+                        onClick={()=>buyMore(sel)}>
+                        {t("buy_more")}
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -2531,6 +2540,11 @@ async function saveEditSession(){
                 </div>
               </div>
               <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:14}}>
+                {!isJournal(sel)&&selCounts.remaining===0&&(
+                  <button className="btn btn-g" data-testid="session-buy-more" onClick={()=>buyMore(sel)}>
+                    {t("buy_more")}
+                  </button>
+                )}
                 <div className="card" style={{padding:"20px"}}>
                   <p style={{fontSize:13,fontWeight:600,marginBottom:4}}>Treatment Photo</p>
                   <p style={{fontSize:12,color:"#9A8A78",marginBottom:16}}>Document your results or any reactions</p>

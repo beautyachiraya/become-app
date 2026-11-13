@@ -11,6 +11,7 @@ import {
   packKind,
   compareExpirySoonest,
   buildHistoryTimeline,
+  historyPackSummaryListed,
   applySessionLog,
   listOpenPacks,
   mergeTreatmentsById,
@@ -221,12 +222,15 @@ describe("history timeline", () => {
     });
     const items = buildHistoryTimeline([usedUp, expired], NOW);
     expect(items.map((row) => row.type + ":" + row.packageId + ":" + (row.date || ""))).toEqual([
-      "pack:4:2026-07-01",
       "session:4:2026-07-01",
       "session:4:2026-04-01",
       "session:2:2025-12-01",
       "pack:2:2025-09-30",
     ]);
+    expect(items.filter((row) => row.packageId === 4 && row.type === "pack")).toEqual([]);
+    expect(items.find((row) => row.packageId === 4 && row.date === "2026-07-01").session.note).toBe("Last");
+    expect(historyPackSummaryListed(usedUp, NOW)).toBe(false);
+    expect(historyPackSummaryListed(expired, NOW)).toBe(true);
     expect(items.filter((row) => row.packageId === 2).every((row) => row.kind === "promo")).toBe(true);
     expect(items.filter((row) => row.packageId === 4).every((row) => row.kind === "paid")).toBe(true);
   });
@@ -267,6 +271,127 @@ describe("history timeline", () => {
     expect(items[0].session.note).toBe("Session 1");
     expect(items[0].packageId).toBe("hf");
     expect(items[0].session.packageId).toBe("hf");
+    expect(isOpenPack(open, NOW)).toBe(true);
+    expect(items.some((row) => row.type === "pack")).toBe(false);
+  });
+
+  it("does not list a used-up package beside the completed session for the same visit", () => {
+    const botox = pack({
+      id: "botox",
+      name: "Botox wrinkles",
+      clinic: "Apex",
+      totalSessions: 1,
+      expiryDate: "2026-12-31",
+      sessions: [{
+        id: 1,
+        date: "2026-08-12",
+        note: "หน้าผากตึง รอประมาณ 45 นาที หมอแนะนำได้ตา vitaran",
+      }],
+    });
+    const lip = pack({
+      id: "lip",
+      name: "Lip pigmentation",
+      clinic: "Masterdream",
+      totalSessions: 1,
+      expiryDate: "2026-12-31",
+      sessions: [{ id: 1, date: "2026-06-11", note: "Colour settled" }],
+    });
+    const items = buildHistoryTimeline([botox, lip], NOW);
+
+    expect(items.filter((row) => row.packageId === "botox").map((row) => row.type)).toEqual(["session"]);
+    expect(items.filter((row) => row.packageId === "lip").map((row) => row.type)).toEqual(["session"]);
+    expect(items.map((row) => `${row.packageId}:${row.type}:${row.date}`)).toEqual([
+      "botox:session:2026-08-12",
+      "lip:session:2026-06-11",
+    ]);
+    const visit = items[0];
+    expect(visit.session.note).toBe("หน้าผากตึง รอประมาณ 45 นาที หมอแนะนำได้ตา vitaran");
+    expect(visit.pack.clinic).toBe("Apex");
+    expect(visit.pack.name).toBe("Botox wrinkles");
+    expect(historyPackSummaryListed(botox, NOW)).toBe(false);
+
+    const sameDay = items.filter((row) => String(row.date).slice(0, 10) === "2026-08-12" && row.packageId === "botox");
+    expect(sameDay).toHaveLength(1);
+  });
+
+  it("lists every visit of a multi-session used-up pack once, including the last visit", () => {
+    const usedUp = pack({
+      id: "peel",
+      name: "Chemical Peel",
+      clinic: "Apex",
+      totalSessions: 3,
+      expiryDate: "2026-12-01",
+      sessions: [
+        { id: 1, date: "2026-04-01", note: "First" },
+        { id: 2, date: "2026-06-01", note: "Second" },
+        { id: 3, date: "2026-08-12", note: "Last visit" },
+      ],
+    });
+    const items = buildHistoryTimeline([usedUp], NOW);
+    expect(items.map((row) => `${row.type}:${row.date}:${row.session.note}`)).toEqual([
+      "session:2026-08-12:Last visit",
+      "session:2026-06-01:Second",
+      "session:2026-04-01:First",
+    ]);
+    expect(items.some((row) => row.type === "pack")).toBe(false);
+  });
+
+  it("keeps separate cards for different treatments logged on the same day", () => {
+    const laserNoted = pack({
+      id: "laser-a",
+      name: "Laser Hair Removal",
+      clinic: "ABC",
+      totalSessions: 8,
+      expiryDate: "2027-05-12",
+      sessions: [{ id: 1, date: "2026-11-13", note: "Test" }],
+    });
+    const laserPlain = pack({
+      id: "laser-b",
+      name: "Laser Hair Removal",
+      clinic: "ABC",
+      totalSessions: 8,
+      expiryDate: "2027-06-01",
+      sessions: [{ id: 2, date: "2026-11-13" }],
+    });
+    const testVisit = pack({
+      id: "test",
+      name: "Test",
+      clinic: "Aa",
+      totalSessions: 1,
+      expiryDate: "2026-12-31",
+      sessions: [{ id: 1, date: "2026-11-13" }],
+    });
+    const items = buildHistoryTimeline([laserNoted, laserPlain, testVisit], new Date("2026-11-13T12:00:00"));
+    const nov13 = items.filter((row) => String(row.date).slice(0, 10) === "2026-11-13");
+    expect(nov13.map((row) => `${row.packageId}:${row.type}`).sort()).toEqual([
+      "laser-a:session",
+      "laser-b:session",
+      "test:session",
+    ]);
+    expect(nov13.find((row) => row.packageId === "laser-a").session.note).toBe("Test");
+    expect(isOpenPack(laserNoted, new Date("2026-11-13T12:00:00"))).toBe(true);
+    expect(isHistoryPack(testVisit, new Date("2026-11-13T12:00:00"))).toBe(true);
+    expect(nov13.some((row) => row.type === "pack")).toBe(false);
+  });
+
+  it("still shows a used-up summary when no visit was logged to stand in for it", () => {
+    const empty = pack({ id: "empty", totalSessions: 0, sessions: [], expiryDate: "2026-12-31" });
+    expect(historyPackSummaryListed(empty, NOW)).toBe(true);
+    const items = buildHistoryTimeline([empty], NOW);
+    expect(items.map((row) => row.type)).toEqual(["pack"]);
+    expect(items[0].usedUp).toBe(true);
+  });
+
+  it("counts map-shaped sessions so a used-up pack is not also a summary card", () => {
+    const usedUpMap = pack({
+      id: "map",
+      totalSessions: 1,
+      sessions: { 0: { id: 1, date: "2026-08-12", note: "Mapped" } },
+    });
+    const items = buildHistoryTimeline([usedUpMap], NOW);
+    expect(items.map((row) => row.type)).toEqual(["session"]);
+    expect(items[0].session.note).toBe("Mapped");
+    expect(items[0].date).toBe("2026-08-12");
   });
 });
 
