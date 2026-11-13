@@ -98,6 +98,42 @@ export function formatDateLabel(value, locale) {
   return `${Number(match[3])} ${month} ${match[1]}`;
 }
 
+/**
+ * Customer-facing date with a year, in the active language.
+ * "12 May 2027" in English, "12 พ.ค. 2027" in Thai.
+ * Date-only strings are read from the calendar date, not shifted by timezone.
+ */
+export function formatCustomerDate(value, locale) {
+  if (value == null || value === "") return "—";
+  const labeled = formatDateLabel(value, locale);
+  if (labeled) return labeled;
+  const dt = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(dt.getTime())) return "—";
+  const months = locale === "th" ? MONTHS_TH : MONTHS_EN;
+  return `${dt.getDate()} ${months[dt.getMonth()]} ${dt.getFullYear()}`;
+}
+
+/**
+ * Package row inside the plan-a-visit menu.
+ * The year leads so a narrow closed select cannot clip it off the end.
+ */
+export function bookingPackOptionLabel({ treatmentName, sessionsLeftText: left, expiryLabel } = {}) {
+  return [expiryLabel, treatmentName, left].filter(Boolean).join(" · ");
+}
+
+/**
+ * Done opens Log Session. The visit stays planned until that log is saved.
+ * Closing the sheet without saving does not complete the visit.
+ */
+export function visitAfterLogAttempt(visit, saved) {
+  if (!visit) return null;
+  if (!saved) {
+    const planned = normalizeVisit(visit);
+    return { ...planned, status: "planned" };
+  }
+  return completeVisit(visit);
+}
+
 export function combinePlannedAt(date, time) {
   const day = dateOnly(date);
   if (!day) return "";

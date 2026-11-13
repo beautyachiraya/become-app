@@ -20,7 +20,9 @@ import {
   suggestNextDate,
   upcomingVisits,
   cleanBookingUrl,
+  bookingPackOptionLabel,
 } from "./visits";
+import { TAB_CLEARANCE } from "./shellLayout";
 
 const STATUS_KEY = {
   planned: "booking_planned",
@@ -155,7 +157,7 @@ export function BookingScreen({
   const hasVisits = upcoming.length > 0 || earlier.length > 0;
 
   return (
-    <div data-testid="booking-screen" data-channel={channel} style={{ paddingBottom: 100 }}>
+    <div data-testid="booking-screen" data-channel={channel} style={{ paddingBottom: TAB_CLEARANCE }}>
       <div style={{ background: "linear-gradient(160deg,#EDE5D8,#F5EFE6,#FAF7F2)", padding: "calc(60px + env(safe-area-inset-top)) 24px 28px", borderRadius: "0 0 32px 32px", borderBottom: "1px solid rgba(180,145,95,0.12)" }}>
         <p style={{ fontSize: 11, color: "#B4915F", fontWeight: 600, letterSpacing: 2.5, textTransform: "uppercase", marginBottom: 10 }}>{t("booking_tab")}</p>
         <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 36, fontWeight: 300, lineHeight: 1.1 }}>{t("booking_title")}</h1>
@@ -225,7 +227,11 @@ export function BookingScreen({
                 onEdit={() => startEdit(visit)}
                 onAskCancel={() => { setMenuId(null); setConfirmId(visit.id); }}
                 onKeep={() => setConfirmId(null)}
-                onCancel={() => onCancelVisit && onCancelVisit(visit)}
+                onCancel={() => {
+                  setNotice(false);
+                  setPendingUrl("");
+                  if (onCancelVisit) onCancelVisit(visit);
+                }}
                 onMessage={() => {
                   const pack = findPack(treatments, visit.packageId) || findPack(openPacks, visit.packageId);
                   if (pack) requestMessage(pack, visit.plannedAt);
@@ -236,7 +242,11 @@ export function BookingScreen({
                     trackMode: "journal",
                   }, visit.plannedAt);
                 }}
-                onDone={() => onCompleteVisit && onCompleteVisit(visit)}
+                onDone={() => {
+                  setNotice(false);
+                  setPendingUrl("");
+                  if (onCompleteVisit) onCompleteVisit(visit);
+                }}
               />
             ))}
           </div>
@@ -475,7 +485,7 @@ function VisitCard({
       {!quiet && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 14 }}>
           <button type="button" className="btn btn-g" style={{ padding: "10px 14px" }} disabled={isSaving} onClick={onMessage}>{t("booking_message")}</button>
-          <button type="button" className="btn btn-g" style={{ padding: "10px 14px" }} disabled={isSaving} onClick={onDone}>{t("booking_mark_done")}</button>
+          <button type="button" className="btn btn-g" data-testid="visit-done" style={{ padding: "10px 14px" }} disabled={isSaving} onClick={onDone}>{t("booking_mark_done")}</button>
         </div>
       )}
       {confirming && (
@@ -552,14 +562,19 @@ function PlanSheet({
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div>
             <span className="lbl">{t("booking_package")}</span>
-            <select className="inp" aria-label={t("booking_package")} value={form.packageId} onChange={(event) => selectPack(event.target.value)}>
+            <select className="inp" aria-label={t("booking_package")} value={form.packageId} onChange={(event) => selectPack(event.target.value)}
+              style={{ fontSize: 13, lineHeight: 1.35, textOverflow: "clip" }}>
               <option value="">{t("booking_choose_pack")}</option>
               {pickerPacks.map((pack) => {
                 const item = packSummary(pack);
                 const left = item.journal ? t("booking_journal") : sessionsLeftText(item.sessionsLeft, locale);
-                const exp = item.expiryDate ? `${t("booking_expires")} ${formatDateLabel(item.expiryDate, locale)}` : "";
-                const label = [item.treatmentName, item.clinicName, left, exp].filter(Boolean).join(" · ");
-                return <option key={pack.id} value={String(pack.id)}>{label}</option>;
+                const exp = item.expiryDate ? formatDateLabel(item.expiryDate, locale) : "";
+                const label = bookingPackOptionLabel({
+                  treatmentName: item.treatmentName,
+                  sessionsLeftText: left,
+                  expiryLabel: exp,
+                });
+                return <option key={pack.id} value={String(pack.id)} title={label}>{label}</option>;
               })}
             </select>
           </div>

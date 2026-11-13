@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
+import { act } from "react";
 import { BookingScreen } from "./BookingScreen";
 import { BOOKING_COPY } from "./bookingCopy";
+import { TAB_CLEARANCE, tabClearanceCoversBar } from "./shellLayout";
 
 const EXTRA = {
   booking_tab: "Booking",
@@ -209,5 +212,61 @@ describe("booking screen", () => {
     const html = visible(screen({ openPacks: [pack()], treatments: [pack()], initialNotice: true }));
     expect(html).toContain("Visit planned");
     expect(html).toContain("This isn't a confirmation from the clinic.");
+  });
+
+  it("shows the full expiry year at the start of the package menu", () => {
+    const html = visible(screen({
+      openPacks: [pack()],
+      treatments: [pack()],
+      initialSheet: "plan",
+    }));
+    expect(html).toContain("1 Nov 2026 · Hydrafacial · 5 left");
+    expect(html).not.toContain("Expires 12 May 20<");
+  });
+
+  it("clears the Visit planned note when Done is tapped and leaves the visit planned", () => {
+    global.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onCompleteVisit = jest.fn();
+    const visit = {
+      id: "v1",
+      packageId: "p1",
+      clinicName: "Pure Skin Spa",
+      treatmentName: "Hydrafacial",
+      plannedAt: "2026-12-12",
+      status: "planned",
+    };
+    act(() => {
+      root.render(
+        <BookingScreen
+          t={t}
+          locale="en"
+          openPacks={[pack()]}
+          treatments={[pack()]}
+          visits={[visit]}
+          initialNotice
+          onCompleteVisit={onCompleteVisit}
+        />
+      );
+    });
+    expect(container.querySelector("[data-testid=visit-success]")).not.toBeNull();
+    expect(container.querySelector("[data-status=planned]")).not.toBeNull();
+    const done = container.querySelector("[data-testid=visit-done]");
+    act(() => { done.click(); });
+    expect(onCompleteVisit).toHaveBeenCalledTimes(1);
+    expect(onCompleteVisit.mock.calls[0][0].status).toBe("planned");
+    expect(container.querySelector("[data-testid=visit-success]")).toBeNull();
+    expect(container.querySelector("[data-status=planned]")).not.toBeNull();
+    expect(container.textContent).not.toContain("Visit planned");
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("pads the list above the tab bar", () => {
+    const html = screen({ openPacks: [pack()], treatments: [pack()] });
+    expect(tabClearanceCoversBar()).toBe(true);
+    expect(html).toContain(TAB_CLEARANCE);
   });
 });
