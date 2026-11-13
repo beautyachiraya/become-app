@@ -8,8 +8,12 @@
  *   remaining  = totalSessions - sessions.length
  *   expired    = expiryDate is in the past
  *   open/Home  = remaining > 0 AND not expired
- *   history    = the package card moves when remaining === 0 (used up) OR expired
+ *   history    = the package leaves Home when remaining === 0 (used up) OR expired
+ *   a used-up package that has logged sessions is listed as those visits only.
+ *     A summary card would be dated to the last visit and look like a second appointment.
+ *   an expired package that still has sessions left keeps one summary card, plus each visit
  *   sessions from a still-open package are also listed in History as soon as they are saved
+ *   the open package card itself stays on Home
  *
  * Per visit (stored as trackMode "journal"):
  *   sessionsTotal / sessionsRemaining / expiresAt stay null
@@ -256,25 +260,42 @@ function pushSessionRows(items, pack, trackMode) {
 }
 
 /**
+ * A used-up package's visits are already session rows. Its summary is dated to
+ * the last visit, so listing both shows one appointment twice (Used up + Buy more
+ * beside Completed session). Keep the summary when there is no visit to stand in
+ * for it, or when the package expired with sessions still left — that card is the
+ * expiry, not another visit.
+ */
+export function historyPackSummaryListed(pack, now) {
+  if (!isHistoryPack(pack, now)) return false;
+  const usedUp = sessionsRemaining(pack) === 0;
+  if (usedUp && coerceSessions(pack && pack.sessions).length > 0) return false;
+  return true;
+}
+
+/**
  * Mixed History timeline: finished packs + every completed session, newest first.
  * Sessions from a still-open package are listed as soon as they are saved.
  * The open package card itself stays on Home. Per visit rows are session rows only.
+ * A used-up package with logged sessions contributes those visits only.
  * Each row keeps packageId and kind so promo/paid balances stay unmerged.
  */
 export function buildHistoryTimeline(treatments, now) {
   const items = [];
   (treatments || []).filter((pack) => isHistoryPack(pack, now)).forEach((pack) => {
-    items.push({
-      type: "pack",
-      id: `pack-${pack.id}`,
-      date: packHistoryDate(pack, now),
-      packageId: pack.id,
-      kind: packKind(pack),
-      trackMode: "package",
-      usedUp: sessionsRemaining(pack) === 0,
-      expired: isExpiredPack(pack, now),
-      pack,
-    });
+    if (historyPackSummaryListed(pack, now)) {
+      items.push({
+        type: "pack",
+        id: `pack-${pack.id}`,
+        date: packHistoryDate(pack, now),
+        packageId: pack.id,
+        kind: packKind(pack),
+        trackMode: "package",
+        usedUp: sessionsRemaining(pack) === 0,
+        expired: isExpiredPack(pack, now),
+        pack,
+      });
+    }
     pushSessionRows(items, pack, "package");
   });
   (treatments || [])
