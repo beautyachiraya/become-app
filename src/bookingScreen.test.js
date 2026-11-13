@@ -4,6 +4,7 @@ import { act } from "react";
 import { BookingScreen } from "./BookingScreen";
 import { BOOKING_COPY } from "./bookingCopy";
 import { TAB_CLEARANCE, tabClearanceCoversBar } from "./shellLayout";
+import { bookingSummaryText } from "./visits";
 
 const EXTRA = {
   booking_tab: "Booking",
@@ -267,6 +268,150 @@ describe("booking screen", () => {
     expect(container.textContent).not.toContain("Visit planned");
     act(() => root.unmount());
     container.remove();
+  });
+
+  it("does not ask for a clinic booking link on the save form", () => {
+    const html = visible(screen({
+      openPacks: [pack()],
+      treatments: [pack()],
+      initialSheet: "plan",
+    }));
+    expect(html).toContain("Remind me");
+    expect(html).toContain("Preferred branch");
+    expect(html).toContain("After you save, you'll get a message to copy and send yourself.");
+    expect(html).not.toContain("Clinic booking link");
+    expect(html).not.toContain("Message clinic after saving");
+    expect(html).not.toContain("opens the clinic");
+    expect(html).not.toContain('placeholder="https://"');
+    expect(html).not.toContain('type="url"');
+  });
+
+  it("shows a copyable clinic message after saving and does not open a chat", async () => {
+    global.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onSaveVisit = jest.fn(async () => true);
+    const onOpenUrl = jest.fn();
+    const opened = jest.spyOn(window, "open").mockImplementation(() => null);
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    document.execCommand = jest.fn(() => true);
+    const profile = { name: "Mali Chen", phone: "0812345678", birthday: "1997-02-20" };
+    act(() => {
+      root.render(
+        <BookingScreen
+          t={t}
+          locale="th"
+          openPacks={[pack({ name: "Botox", clinic: "Glow Clinic" })]}
+          treatments={[pack({ name: "Botox", clinic: "Glow Clinic" })]}
+          visits={[]}
+          profile={profile}
+          channel="line"
+          onSaveVisit={onSaveVisit}
+          onOpenUrl={onOpenUrl}
+          initialSheet="plan"
+          initialForm={{
+            id: "",
+            packageId: "p1",
+            date: "2026-08-12",
+            time: "13:00",
+            notes: "",
+            remind: true,
+            branch: "central phuket",
+            dateTouched: true,
+            branchTouched: true,
+          }}
+        />
+      );
+    });
+    expect(container.querySelector("[data-testid=plan-visit]").textContent).not.toContain("Clinic booking link");
+    await act(async () => {
+      container.querySelector("[data-testid=save-visit]").click();
+    });
+    expect(onSaveVisit).toHaveBeenCalledTimes(1);
+    const visit = onSaveVisit.mock.calls[0][0];
+    expect(visit.status).toBe("planned");
+    expect(visit.branch).toBe("central phuket");
+    expect(visit.bookingUrl).toBeUndefined();
+    expect(onOpenUrl).not.toHaveBeenCalled();
+    expect(opened).not.toHaveBeenCalled();
+    const summary = container.querySelector("[data-testid=booking-summary]");
+    expect(summary).not.toBeNull();
+    expect(summary.value).toBe(bookingSummaryText({
+      locale: "th",
+      profile,
+      visit,
+      branch: "central phuket",
+      date: "2026-08-12",
+      time: "13:00",
+    }));
+    expect(summary.value).toContain("ขอทราบข้อมูลเพื่อลงนัดค่ะ");
+    expect(summary.value).toContain("ชื่อ-นามสกุล : Mali Chen");
+    expect(summary.value).toContain("วันเวลาที่สะดวก : 12/8 13:00");
+    expect(summary.value).not.toContain("0813701551");
+    const proto = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+    await act(async () => {
+      proto.call(summary, `${summary.value}\nเติมเอง`);
+      summary.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      container.querySelector("[data-testid=copy-booking-summary]").click();
+    });
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("เติมเอง"));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("ขอทราบข้อมูลเพื่อลงนัดค่ะ"));
+    expect(container.textContent).toContain("Copied");
+    act(() => root.unmount());
+    container.remove();
+    opened.mockRestore();
+    delete document.execCommand;
+  });
+
+  it("copies the planned visit message from the booking card", async () => {
+    global.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    document.execCommand = jest.fn(() => false);
+    const visit = {
+      id: "v1",
+      packageId: "p1",
+      clinicName: "Glow Clinic",
+      treatmentName: "Botox",
+      plannedAt: "2026-08-12",
+      status: "planned",
+      branch: "central phuket",
+    };
+    const profile = { name: "Mali Chen", phone: "" };
+    act(() => {
+      root.render(
+        <BookingScreen
+          t={t}
+          locale="en"
+          openPacks={[pack({ name: "Botox", clinic: "Glow Clinic" })]}
+          treatments={[pack({ name: "Botox", clinic: "Glow Clinic" })]}
+          visits={[visit]}
+          profile={profile}
+        />
+      );
+    });
+    expect(container.querySelector("[data-testid=copy-visit-summary]").textContent).toBe("Copy message");
+    expect(container.textContent).not.toContain("Clinic page");
+    expect(container.querySelector('a[href^="http"]')).toBeNull();
+    await act(async () => {
+      container.querySelector("[data-testid=copy-visit-summary]").click();
+    });
+    const expected = bookingSummaryText({ locale: "en", profile, visit });
+    expect(writeText).toHaveBeenCalledWith(expected);
+    expect(expected).toContain("Full name: Mali Chen");
+    expect(expected).toContain("Phone:");
+    expect(expected).not.toMatch(/Phone: \d/);
+    expect(container.textContent).toContain("Copied");
+    act(() => root.unmount());
+    container.remove();
+    delete document.execCommand;
   });
 
   it("pads the list above the tab bar", () => {

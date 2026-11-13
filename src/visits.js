@@ -322,6 +322,151 @@ export function draftMessage({ pack, plannedAt, locale }) {
   return lines.join("\n");
 }
 
+const MONTHS_TH_NOTE = ["มค", "กพ", "มีค", "เมย", "พค", "มิย", "กค", "สค", "กย", "ตค", "พย", "ธค"];
+
+/** Branch already saved on a visit or package. Never guessed from the clinic name. */
+export function preferredBranch(...sources) {
+  for (let i = 0; i < sources.length; i += 1) {
+    const source = sources[i];
+    const found = firstString(
+      source && source.branch,
+      source && source.preferredBranch,
+      source && source.location
+    );
+    if (found) return found;
+  }
+  return "";
+}
+
+function calendarParts(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || "").trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, month, day };
+}
+
+/** Clinic chat date: Thai uses day/month like 12/8. English keeps a short month name, still without a year. */
+function compactAppointment(date, time, locale) {
+  const parts = calendarParts(date);
+  const clock = /^(\d{2}):(\d{2})/.exec(String(time || "").trim());
+  const timeLabel = clock ? `${clock[1]}:${clock[2]}` : "";
+  if (!parts) return timeLabel;
+  if (locale === "th") {
+    const when = `${parts.day}/${parts.month}`;
+    return timeLabel ? `${when} ${timeLabel}` : when;
+  }
+  const when = `${parts.day} ${MONTHS_EN[parts.month - 1]}`;
+  return timeLabel ? `${when}, ${timeLabel}` : when;
+}
+
+/**
+ * Birthday for the clinic message.
+ * An ISO date becomes "20 กพ 2540" in Thai (Buddhist year) or "20 Feb 1997" in English.
+ * Any other stored text is copied as-is. A blank stays blank.
+ */
+function compactBirthday(value, locale) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parts = calendarParts(raw);
+  if (!parts) return raw;
+  if (locale === "th") {
+    const year = parts.year >= 2400 ? parts.year : parts.year + 543;
+    return `${parts.day} ${MONTHS_TH_NOTE[parts.month - 1]} ${year}`;
+  }
+  return `${parts.day} ${MONTHS_EN[parts.month - 1]} ${parts.year}`;
+}
+
+function summaryField(emoji, label, value, { colon = true, spacedColon = false } = {}) {
+  const shown = String(value || "").trim();
+  const mark = !colon ? "" : (spacedColon ? " :" : ":");
+  const head = `${emoji} ${label}${mark}`;
+  return shown ? `${head} ${shown}` : head;
+}
+
+function summaryDetails(input) {
+  const src = input || {};
+  const profile = src.profile && typeof src.profile === "object" ? src.profile : {};
+  const pack = src.pack && typeof src.pack === "object" ? src.pack : {};
+  const visit = src.visit && typeof src.visit === "object" ? src.visit : {};
+  const planned = splitPlannedAt(visit.plannedAt);
+  return {
+    clinicName: firstString(src.clinicName, visit.clinicName, pack.clinic),
+    fullName: firstString(src.fullName, profile.name, profile.fullName, profile.displayName),
+    phone: firstString(src.phone, profile.phone, profile.phoneNumber, profile.mobile),
+    treatment: firstString(src.treatment, src.treatmentName, visit.treatmentName, pack.name),
+    branch: firstString(src.branch, visit.branch, visit.preferredBranch, pack.branch, pack.preferredBranch, pack.location),
+    date: firstString(src.date, planned.date),
+    time: firstString(src.time, planned.time),
+    birthday: firstString(
+      asDateText(src.birthday),
+      asDateText(profile.birthday),
+      asDateText(profile.birthDate),
+      asDateText(profile.dateOfBirth),
+      asDateText(profile.dob)
+    ),
+  };
+}
+
+function asDateText(value) {
+  if (value == null || value === "") return "";
+  if (typeof value === "string") return value.trim();
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return formatDateOnly(value);
+  if (typeof value === "object" && typeof value.toDate === "function") {
+    try {
+      const dt = value.toDate();
+      if (dt instanceof Date && !Number.isNaN(dt.getTime())) return formatDateOnly(dt);
+    } catch (err) {
+      return "";
+    }
+  }
+  if (typeof value === "object" && typeof value.seconds === "number") {
+    const dt = new Date(value.seconds * 1000);
+    if (!Number.isNaN(dt.getTime())) return formatDateOnly(dt);
+  }
+  return "";
+}
+
+/**
+ * Text the user copies into LINE or another chat.
+ * Filled only from the signed-in profile and this visit. Missing fields keep their label.
+ * Nothing here is invented, and nothing is sent for her.
+ */
+export function bookingSummaryText(input) {
+  const locale = input && input.locale === "th" ? "th" : "en";
+  const details = summaryDetails(input);
+  const when = compactAppointment(details.date, details.time, locale);
+  const birthday = compactBirthday(details.birthday, locale);
+  const thai = locale === "th";
+  const lines = [
+    thai ? "ขอทราบข้อมูลเพื่อลงนัดค่ะ" : "I'd like to book an appointment.",
+    details.clinicName ? `💜 ${details.clinicName}` : "💜",
+  ];
+  const rows = thai
+    ? [
+      ["👧", "ชื่อ-นามสกุล", details.fullName, true],
+      ["📱", "เบอร์โทรศัพท์", details.phone, false],
+      ["🎂", "วัน/เดือน/ปีเกิด", birthday, true],
+      ["💉", "หัตถการที่ทำ", details.treatment, true],
+      ["🏥", "สาขาที่สะดวก", details.branch, true],
+      ["📅", "วันเวลาที่สะดวก", when, true],
+    ]
+    : [
+      ["👧", "Full name", details.fullName, true],
+      ["📱", "Phone", details.phone, true],
+      ["🎂", "Date of birth", birthday, true],
+      ["💉", "Treatment", details.treatment, true],
+      ["🏥", "Preferred branch", details.branch, true],
+      ["📅", "Preferred date and time", when, true],
+    ];
+  rows.forEach(([emoji, label, value, colon]) => {
+    lines.push(summaryField(emoji, label, value, { colon, spacedColon: thai && colon }));
+  });
+  return lines.join("\n");
+}
+
 export function normalizeVisit(raw, docId) {
   const data = raw || {};
   const id = data.id != null && data.id !== "" ? data.id : docId;
@@ -340,6 +485,8 @@ export function normalizeVisit(raw, docId) {
   };
   if (data.remindAt) visit.remindAt = data.remindAt;
   if (data.notes) visit.notes = data.notes;
+  const branch = preferredBranch(data);
+  if (branch) visit.branch = branch;
   if (data.bookingUrl) visit.bookingUrl = cleanBookingUrl(data.bookingUrl) || undefined;
   if (visit.bookingUrl === undefined) delete visit.bookingUrl;
   if (data.createdAt) visit.createdAt = data.createdAt;
@@ -355,6 +502,7 @@ export function buildVisit({
   time,
   notes,
   remind,
+  branch,
   bookingUrl,
   channel,
   now = new Date(),
@@ -368,6 +516,7 @@ export function buildVisit({
   const remindAt = remind ? remindTimestamp(plannedAt, now) : null;
   const link = cleanBookingUrl(bookingUrl);
   const note = String(notes || "").trim();
+  const branchName = firstString(branch);
   const safeChannel = MESSAGE_CHANNELS.includes(channel) ? channel : "none";
   const visit = {
     id: String((existing && existing.id) || id || `v_${now.getTime()}`),
@@ -383,6 +532,7 @@ export function buildVisit({
   };
   if (remindAt) visit.remindAt = remindAt;
   if (note) visit.notes = note;
+  if (branchName) visit.branch = branchName;
   if (link) visit.bookingUrl = link;
   return visit;
 }

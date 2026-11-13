@@ -7,6 +7,7 @@ import {
   formatCustomerDate,
   bookingPackOptionLabel,
   visitAfterLogAttempt,
+  bookingSummaryText,
   draftMessage,
   earlierVisits,
   isAfterExpiry,
@@ -179,6 +180,112 @@ describe("message clinic", () => {
     const thai = draftMessage({ pack: pack(), plannedAt: "2026-10-12", locale: "th" });
     expect(thai).toContain("เหลือ 5 ครั้ง");
     expect(thai).toContain("หมดอายุ");
+  });
+});
+
+describe("booking summary to copy", () => {
+  const profile = { name: "Mali Chen", phone: "0812345678", dateOfBirth: "1997-02-20" };
+  const visit = {
+    clinicName: "Glow Clinic",
+    treatmentName: "Botox",
+    plannedAt: combinePlannedAt("2026-08-12", "13:00"),
+    branch: "central phuket",
+  };
+
+  it("follows the Thai clinic message, including a Buddhist birth year", () => {
+    expect(bookingSummaryText({ locale: "th", profile, visit })).toBe([
+      "ขอทราบข้อมูลเพื่อลงนัดค่ะ",
+      "💜 Glow Clinic",
+      "👧 ชื่อ-นามสกุล : Mali Chen",
+      "📱 เบอร์โทรศัพท์ 0812345678",
+      "🎂 วัน/เดือน/ปีเกิด : 20 กพ 2540",
+      "💉 หัตถการที่ทำ : Botox",
+      "🏥 สาขาที่สะดวก : central phuket",
+      "📅 วันเวลาที่สะดวก : 12/8 13:00",
+    ].join("\n"));
+  });
+
+  it("uses the same fields in English", () => {
+    expect(bookingSummaryText({ locale: "en", profile, visit })).toBe([
+      "I'd like to book an appointment.",
+      "💜 Glow Clinic",
+      "👧 Full name: Mali Chen",
+      "📱 Phone: 0812345678",
+      "🎂 Date of birth: 20 Feb 1997",
+      "💉 Treatment: Botox",
+      "🏥 Preferred branch: central phuket",
+      "📅 Preferred date and time: 12 Aug, 13:00",
+    ].join("\n"));
+  });
+
+  it("keeps labels when name, phone, birthday, branch, or time are missing", () => {
+    const thai = bookingSummaryText({
+      locale: "th",
+      clinicName: "Glow Clinic",
+      treatment: "Botox",
+      date: "2026-08-12",
+    });
+    expect(thai).toBe([
+      "ขอทราบข้อมูลเพื่อลงนัดค่ะ",
+      "💜 Glow Clinic",
+      "👧 ชื่อ-นามสกุล :",
+      "📱 เบอร์โทรศัพท์",
+      "🎂 วัน/เดือน/ปีเกิด :",
+      "💉 หัตถการที่ทำ : Botox",
+      "🏥 สาขาที่สะดวก :",
+      "📅 วันเวลาที่สะดวก : 12/8",
+    ].join("\n"));
+    expect(thai).not.toContain("0813701551");
+    expect(thai).not.toContain("อชิรญา");
+    expect(thai).not.toMatch(/\b(confirmed|reserved|booked)\b/i);
+
+    const english = bookingSummaryText({
+      locale: "en",
+      pack: { name: "Botox", clinic: "Glow Clinic", whatsappPhone: "971501234567" },
+      profile: {},
+      date: "2026-08-05",
+      time: "09:30",
+    });
+    expect(english).toBe([
+      "I'd like to book an appointment.",
+      "💜 Glow Clinic",
+      "👧 Full name:",
+      "📱 Phone:",
+      "🎂 Date of birth:",
+      "💉 Treatment: Botox",
+      "🏥 Preferred branch:",
+      "📅 Preferred date and time: 5 Aug, 09:30",
+    ].join("\n"));
+    expect(english).not.toContain("971501234567");
+    expect(english).not.toContain("0813701551");
+  });
+
+  it("reads a saved birthday string as-is and does not use the clinic number as her phone", () => {
+    const text = bookingSummaryText({
+      locale: "th",
+      profile: { name: "Mali Chen", phone: "0812345678", birthday: "20 กพ 2540" },
+      pack: { name: "Botox", clinic: "Glow Clinic", whatsappPhone: "+971 50 123 4567" },
+      date: "2026-08-12",
+      time: "13:00",
+    });
+    expect(text).toContain("🎂 วัน/เดือน/ปีเกิด : 20 กพ 2540");
+    expect(text).toContain("📱 เบอร์โทรศัพท์ 0812345678");
+    expect(text).not.toContain("971");
+  });
+
+  it("saves a branch on a visit that stays planned", () => {
+    const planned = buildVisit({
+      pack: pack({ name: "Botox", clinic: "Glow Clinic" }),
+      date: "2026-08-12",
+      time: "13:00",
+      branch: "central phuket",
+      channel: "line",
+      remind: false,
+    });
+    expect(planned.status).toBe("planned");
+    expect(planned.branch).toBe("central phuket");
+    expect(planned.bookingUrl).toBeUndefined();
+    expect(normalizeVisit(planned).branch).toBe("central phuket");
   });
 });
 
