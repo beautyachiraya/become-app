@@ -23,6 +23,7 @@ import { normalizeVisit, cancelVisit, withClinicContact, messageChannelForProfil
 import { shouldShowFirstRunEmpty, homeSurface } from "./homeState";
 import { LANGUAGE_EN, LANGUAGE_TH, localeFromLanguage, readStoredLanguage, writeStoredLanguage, languageFromProfile } from "./language";
 import { TAB_CLEARANCE } from "./shellLayout";
+import { FIGURE_CSS, FIGURE_INK, META_INK, Numeral, SessionHeading, dateInputStyle, figureInk, pendingDotPaint } from "./figureType";
 
 const dataClient = createDataClient({ db, getDoc, getDocs, setDoc, deleteDoc, doc, collection });
 
@@ -39,7 +40,7 @@ const B = {
   danger:"#C05858", dangerBg:"#FAEAEA",
 };
 
-const PALETTE = [
+export const PALETTE = [
   {bg:"#FDF0F2",soft:"#F5CDD4",accent:"#D4788A",text:"#A04058"},
   {bg:"#FDF4EE",soft:"#F5D8C0",accent:"#D49068",text:"#A05830"},
   {bg:"#F0F8F4",soft:"#C0DEC8",accent:"#5A9E78",text:"#2A6A48"},
@@ -1522,6 +1523,7 @@ async function saveEditSession(){
     .pop{animation:popIn 0.4s cubic-bezier(0.16,1,0.3,1) forwards;opacity:0;}
     .p1{animation-delay:.05s}.p2{animation-delay:.1s}.p3{animation-delay:.15s}.p4{animation-delay:.2s}.p5{animation-delay:.25s}
     ::-webkit-scrollbar{width:0;}
+    ${FIGURE_CSS}
   `;
 
   const gLogo=<svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>;
@@ -1977,7 +1979,7 @@ async function saveEditSession(){
                               <p style={{fontSize:14,fontWeight:600}}>{pack.name}</p>
                               <p style={{fontSize:12,color:"#9A8A78"}}>{pack.clinic}</p>
                             </div>
-                            <span className="pill pill-warn">{e} {t("days_short")} {t("left_label")}</span>
+                            <span className="pill pill-warn num" style={{color:"#7A4E10"}}>{e} {t("days_short")} {t("left_label")}</span>
                           </div>
                         );
                       })}
@@ -2032,10 +2034,10 @@ async function saveEditSession(){
                                     />
                                   </svg>
                                   <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-                                    <p style={{fontSize:isLate||isToday?10:13,fontWeight:800,color:isLate?"#A0407A":p.accent,lineHeight:1,letterSpacing:-0.3}}>
+                                    <Numeral size={isLate||isToday?12:16} color={isLate?"#A0407A":figureInk(p)}>
                                       {isToday?nowLabel:isLate?lateWord:d}
-                                    </p>
-                                    {!isToday&&!isLate&&<p style={{fontSize:7,color:p.accent,fontWeight:600,letterSpacing:0.3}}>{daysWord}</p>}
+                                    </Numeral>
+                                    {!isToday&&!isLate&&<p className="num" style={{fontSize:9,color:figureInk(p),marginTop:1}}>{daysWord}</p>}
                                   </div>
                                 </div>
                                 {/* Info */}
@@ -2048,11 +2050,11 @@ async function saveEditSession(){
                                   {isLate?(
                                     <span className="pill pill-late" style={{fontSize:11}}>{lateWord}</span>
                                   ):isToday?(
-                                    <span style={{fontSize:12,fontWeight:700,color:p.accent}}>{todayWord}</span>
+                                    <span className="num" style={{fontSize:12,color:figureInk(p)}}>{todayWord}</span>
                                   ):(
                                     <div>
-                                      <p style={{fontSize:12,fontWeight:600,color:"#1C1612"}}>{fmt(row.nextDate)}</p>
-                                      <p style={{fontSize:10,color:"#9A8A78",marginTop:1}}>{frequencyText(row.frequencyLabel)}</p>
+                                      <p className="num" style={{fontSize:13,color:FIGURE_INK}}>{fmt(row.nextDate)}</p>
+                                      <p className="num" style={{fontSize:11,color:META_INK,marginTop:1,fontWeight:500}}>{frequencyText(row.frequencyLabel)}</p>
                                     </div>
                                   )}
                                 </div>
@@ -2140,10 +2142,10 @@ async function saveEditSession(){
                             </div>
                           </div>
                           <div style={{textAlign:"right",marginLeft:12,display:"flex",flexDirection:"column",alignItems:"flex-end"}}>
-                            <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:40,fontWeight:400,color:p.accent,lineHeight:1}}>{rem}</p>
+                            <Numeral as="p" color={figureInk(p)} size={34}>{rem}</Numeral>
                             <p style={{fontSize:9,color:"#C4B8A8",fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>{t("left_label")}</p>
                             {pack.expiryDate
-                              ? <span style={{fontSize:11,color:"#9A8A78"}}>{t("exp_prefix")} {fmt(pack.expiryDate)}</span>
+                              ? <span className="num" style={{fontSize:12,color:META_INK}}>{t("exp_prefix")} {fmt(pack.expiryDate)}</span>
                               : null
                             }
                           </div>
@@ -2156,31 +2158,32 @@ async function saveEditSession(){
                               const sess=sortedS[idx];
                               const isDone=idx<used;
                               const isNext=idx===used;
+                              const dot=pendingDotPaint(p);
                               return(
                                 <button key={idx} onClick={e=>{e.stopPropagation();openDot(pack.id,idx,sess);}}
                                   style={{width:isDone?34:isNext?28:22,height:isDone?34:isNext?28:22,borderRadius:"50%",
-                                    border:isDone?"none":isNext?`2px dashed ${p.accent}`:`1.5px dashed ${p.accent}30`,
+                                    border:isDone?"none":isNext?dot.nextBorder:dot.futureBorder,
                                     background:isDone?`linear-gradient(135deg,${p.soft},${p.accent})`:isNext?`${p.accent}0D`:"transparent",
                                     cursor:isDone||isNext?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",
                                     boxShadow:isDone?`0 3px 10px ${p.accent}35`:"none",transition:"all 0.18s",padding:0,flexShrink:0}}>
                                   {isDone&&sess&&sess.photo
                                     ? <img src={sess.photo} style={{width:"100%",height:"100%",borderRadius:"50%",objectFit:"cover"}} alt=""/>
                                     : isDone
-                                      ? <span style={{fontSize:11,color:"#FFF",fontWeight:700}}>{idx+1}</span>
+                                      ? <Numeral size={12} color="#FFFFFF">{idx+1}</Numeral>
                                       : isNext
-                                        ? <span style={{fontSize:13,color:p.accent,lineHeight:1}}>+</span>
-                                        : <span style={{fontSize:9,color:`${p.accent}40`,fontWeight:600}}>{idx+1}</span>
+                                        ? <span style={{fontSize:14,color:dot.ink,fontWeight:600,lineHeight:1}}>+</span>
+                                        : <Numeral size={11} color={dot.ink}>{idx+1}</Numeral>
                                   }
                                 </button>
                               );
                             })}
-                            <span style={{fontSize:11,color:"#9A8A78",marginLeft:4,fontWeight:500}}>{used}/{total}</span>
+                            <span className="num" style={{fontSize:12,marginLeft:4,color:FIGURE_INK}}>{used}/{total}</span>
                           </div>
                         </div>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                          {next&&rem>0&&daysUntil(next)>=0&&<span className="pill pill-ok">{t("next_prefix")} {fmt(next)}</span>}
-                          {next&&rem>0&&daysUntil(next)<0&&<span className="pill pill-late">{t("late_label")} · {Math.abs(daysUntil(next))}{t("overdue_suffix")}</span>}
-                          {expDays!==null&&expDays>=0&&expDays<=30&&<span className="pill pill-warn">{t("exp_soon")} {expDays} {t("days_short")}</span>}
+                          {next&&rem>0&&daysUntil(next)>=0&&<span className="pill pill-ok num" style={{color:"#1B6B3A"}}>{t("next_prefix")} {fmt(next)}</span>}
+                          {next&&rem>0&&daysUntil(next)<0&&<span className="pill pill-late num">{t("late_label")} · {Math.abs(daysUntil(next))}{t("overdue_suffix")}</span>}
+                          {expDays!==null&&expDays>=0&&expDays<=30&&<span className="pill pill-warn num" style={{color:"#7A4E10"}}>{t("exp_soon")} {expDays} {t("days_short")}</span>}
                         </div>
                       </div>
                     );
@@ -2233,7 +2236,7 @@ async function saveEditSession(){
                                 {TREATMENT_ICONS[pack.name]||"✧"}
                               </div>
                               <div style={{flex:1,minWidth:0}}>
-                                <p style={{fontSize:12,color:"#9A8A78",marginBottom:4}}>{fmt(item.date)}</p>
+                                <p className="num" style={{fontSize:13,color:META_INK,marginBottom:4}}>{fmt(item.date)}</p>
                                 <p style={{fontSize:15,fontWeight:600,marginBottom:2}}>{pack.name}</p>
                                 <p style={{fontSize:12,color:"#9A8A78"}}>{pack.clinic}</p>
                                 <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
@@ -2259,7 +2262,7 @@ async function saveEditSession(){
                         onClick={()=>openDot(pack.id,item.sessionIndex,item.session)}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
                           <div style={{flex:1,minWidth:0}}>
-                            <p style={{fontSize:12,color:"#9A8A78",marginBottom:4}}>{fmt(item.date)}</p>
+                            <p className="num" style={{fontSize:13,color:META_INK,marginBottom:4}}>{fmt(item.date)}</p>
                             <p style={{fontSize:14,fontWeight:600}}>{pack.name}</p>
                             <p style={{fontSize:12,color:"#9A8A78",marginTop:2}}>{isJournal(pack)?t("journal_visit"):t("completed_session")} · {pack.clinic}</p>
                             {item.session&&item.session.note&&<p style={{fontSize:12,color:"#7A6A58",marginTop:6}}>{item.session.note}</p>}
@@ -2329,13 +2332,13 @@ async function saveEditSession(){
                     lastVisitText={lastSessionDate(sel)?fmt(lastSessionDate(sel)):t("no_visits_yet")}
                     nextSuggestedText={sel.frequency?(getNext(sel)?fmt(getNext(sel)):frequencyText(sel.frequencyLabel)):""}
                     labels={{visits:t("visits_logged"),lastVisit:t("last_visit"),next:t("next_suggested")}}
-                    accent={pal.accent}
+                    ink={figureInk(pal)}
                   />
                 ):(
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:24}}>
                   {[{label:t("stat_done"),val:selCounts.used},{label:t("stat_left"),val:selCounts.remaining},{label:t("stat_total"),val:selCounts.total}].map(s=>(
                     <div key={s.label} className="card" style={{padding:"14px 10px",textAlign:"center"}}>
-                      <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,color:pal.accent,lineHeight:1}}>{s.val}</p>
+                      <Numeral as="p" color={figureInk(pal)} size={28}>{s.val}</Numeral>
                       <p style={{fontSize:10,color:"#9A8A78",fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginTop:4}}>{s.label}</p>
                     </div>
                   ))}
@@ -2375,12 +2378,12 @@ async function saveEditSession(){
                           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                             <div>
                               <p style={{fontSize:10,fontWeight:600,color:isLate?"#A0407A":pal.text,letterSpacing:2,textTransform:"uppercase",marginBottom:6}}>{isLate?t("session_overdue"):t("time_to_become")}</p>
-                              <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:400}}>{fmt(getNext(sel))}</p>
-                              <p style={{fontSize:12,color:"#9A8A78",marginTop:4}}>{isLate?`${Math.abs(nextDays)}${t("overdue_suffix")} · ${frequencyText(sel.frequencyLabel)}`:`${t("in_days")} ${nextDays} ${t("days_label")} · ${frequencyText(sel.frequencyLabel)}`}</p>
+                              <Numeral as="p" size={22}>{fmt(getNext(sel))}</Numeral>
+                              <p className="num" style={{fontSize:13,color:META_INK,marginTop:4,fontWeight:500}}>{isLate?`${Math.abs(nextDays)}${t("overdue_suffix")} · ${frequencyText(sel.frequencyLabel)}`:`${t("in_days")} ${nextDays} ${t("days_label")} · ${frequencyText(sel.frequencyLabel)}`}</p>
                             </div>
                             <div style={{width:52,height:52,borderRadius:"50%",background:"#FFF",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",boxShadow:isLate?"0 4px 16px rgba(160,64,122,0.15)":"0 4px 16px rgba(180,145,95,0.15)",flexShrink:0}}>
-                              <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:400,color:isLate?"#A0407A":pal.accent,lineHeight:1}}>{isLate?Math.abs(nextDays):nextDays}</p>
-                              <p style={{fontSize:8,color:"#9A8A78",letterSpacing:1,textTransform:"uppercase"}}>{isLate?t("late_label"):t("days_label")}</p>
+                              <Numeral size={18} color={isLate?"#A0407A":figureInk(pal)}>{isLate?Math.abs(nextDays):nextDays}</Numeral>
+                              <p className="num" style={{fontSize:9,color:isLate?"#A0407A":figureInk(pal),letterSpacing:0.4,textTransform:"uppercase",marginTop:2}}>{isLate?t("late_label"):t("days_label")}</p>
                             </div>
                           </div>
                         </div>
@@ -2390,16 +2393,16 @@ async function saveEditSession(){
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
                       <div className="card" style={{padding:"16px"}}>
                         <span className="lbl">{t("detail_frequency")}</span>
-                        <p style={{fontSize:14,fontWeight:600}}>{frequencyText(sel.frequencyLabel)}</p>
+                        <p className="num" style={{fontSize:15,color:FIGURE_INK}}>{frequencyText(sel.frequencyLabel)}</p>
                       </div>
                       <div className="card" style={{padding:"16px"}}>
                         <span className="lbl">{t("detail_expires")}</span>
-                        <p style={{fontSize:14,fontWeight:600}}>{fmt(sel.expiryDate)}</p>
+                        <p className="num" style={{fontSize:15,color:FIGURE_INK}}>{fmt(sel.expiryDate)}</p>
                         {sel.expiryDate&&(()=>{
                           const d=daysUntil(sel.expiryDate);
-                          if(d<0)return <span className="pill pill-danger" style={{marginTop:6,display:"inline-flex"}}>{t("detail_expired")}</span>;
-                          if(d<=30)return <span className="pill pill-warn" style={{marginTop:6,display:"inline-flex"}}>{d} {t("days_short")} {t("left_label")}</span>;
-                          return <span className="pill pill-c" style={{marginTop:6,display:"inline-flex"}}>{d} {t("days_label")}</span>;
+                          if(d<0)return <span className="pill pill-danger num" style={{marginTop:6,display:"inline-flex"}}>{t("detail_expired")}</span>;
+                          if(d<=30)return <span className="pill pill-warn num" style={{marginTop:6,display:"inline-flex",color:"#7A4E10"}}>{d} {t("days_short")} {t("left_label")}</span>;
+                          return <span className="pill pill-c num" style={{marginTop:6,display:"inline-flex",color:FIGURE_INK}}>{d} {t("days_label")}</span>;
                         })()}
                       </div>
                     </div>
@@ -2412,6 +2415,7 @@ async function saveEditSession(){
                           const ss=sortedSessions[i];
                           const isDone=i<selCounts.used;
                           const isNext=i===selCounts.used;
+                          const dot=pendingDotPaint(pal);
                           return(
                             <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
                               <button
@@ -2420,20 +2424,20 @@ async function saveEditSession(){
                                   else openFreshLog(i);
                                 }}
                                 style={{width:isDone?48:isNext?40:32,height:isDone?48:isNext?40:32,borderRadius:"50%",
-                                  border:isDone?"none":isNext?`2px dashed ${pal.accent}`:`1.5px dashed ${pal.accent}25`,
+                                  border:isDone?"none":isNext?dot.nextBorder:dot.futureBorder,
                                   background:isDone?`linear-gradient(135deg,${pal.soft},${pal.accent})`:isNext?`${pal.accent}0D`:"transparent",
                                   cursor:isDone||isNext?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",
                                   boxShadow:isDone?`0 4px 14px ${pal.accent}35`:"none",transition:"all 0.2s",padding:0,flexShrink:0}}>
                                 {isDone&&ss&&ss.photo
                                   ? <img src={ss.photo} style={{width:"100%",height:"100%",borderRadius:"50%",objectFit:"cover"}} alt=""/>
                                   : isDone
-                                    ? <span style={{fontSize:14,color:"#FFF",fontWeight:700}}>{i+1}</span>
+                                    ? <Numeral size={15} color="#FFFFFF">{i+1}</Numeral>
                                     : isNext
-                                      ? <span style={{fontSize:16,color:pal.accent}}>+</span>
-                                      : <span style={{fontSize:11,color:`${pal.accent}35`,fontWeight:600}}>{i+1}</span>
+                                      ? <span style={{fontSize:18,color:dot.ink,fontWeight:600,lineHeight:1}}>+</span>
+                                      : <Numeral size={13} color={dot.ink}>{i+1}</Numeral>
                                 }
                               </button>
-                              <p style={{fontSize:9,color:isDone?"#9A8A78":"#C4B8A8",textAlign:"center",maxWidth:48,lineHeight:1.3}}>
+                              <p className="num" style={{fontSize:10,color:isDone?META_INK:"#C4B8A8",textAlign:"center",maxWidth:56,lineHeight:1.3,fontWeight:500}}>
                                 {isDone&&ss&&ss.date?fmt(ss.date):isNext?t("next_prefix"):""}
                               </p>
                             </div>
@@ -2517,12 +2521,12 @@ async function saveEditSession(){
                 </div>
                 <div style={{display:"flex",gap:12,alignItems:"center"}}>
                   <div style={{width:44,height:44,borderRadius:"50%",background:`linear-gradient(135deg,${pal.soft},${pal.accent})`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 4px 14px ${pal.accent}30`,flexShrink:0}}>
-                    <span style={{fontSize:17,color:"#FFF",fontWeight:700}}>{sessionIdx+1}</span>
+                    <Numeral size={16} color="#FFFFFF">{sessionIdx+1}</Numeral>
                   </div>
                   <div>
                     <p style={{fontSize:12,color:"#9A8A78"}}>{sel.name} · {sel.clinic}</p>
-                    <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:400}}>{isJournal(sel)?`${t("journal_visit")} ${sessionIdx+1}`:`Session ${sessionIdx+1}`}</h2>
-                    <p style={{fontSize:13,color:pal.text,fontWeight:600,marginTop:2}}>{fmt(selSession.date)}</p>
+                    <SessionHeading label={isJournal(sel)?t("journal_visit"):"Session"} n={sessionIdx+1} size={28}/>
+                    <p className="num" style={{fontSize:14,color:figureInk(pal),marginTop:2}}>{fmt(selSession.date)}</p>
                   </div>
                 </div>
               </div>
@@ -2604,10 +2608,10 @@ async function saveEditSession(){
             <div className="mbg" onClick={e=>{if(e.target===e.currentTarget)closeLog();}}>
               <div className="msheet">
                 <div className="mhandle"/>
-                <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:400,marginBottom:4}}>{isJournal(sel)?t("log_visit"):`${t("log_session_title")} ${(logTargetIdx!==null?logTargetIdx:selCounts.used)+1}`}</h2>
+                <SessionHeading label={isJournal(sel)?t("log_visit"):t("log_session_title")} n={isJournal(sel)?null:(logTargetIdx!==null?logTargetIdx:selCounts.used)+1} size={30} style={{marginBottom:4}}/>
                 <p style={{fontSize:13,color:"#9A8A78",marginBottom:24}}>{sel.name} · {sel.clinic}</p>
                 <div style={{display:"flex",flexDirection:"column",gap:16}}>
-                  <div><span className="lbl">{t("log_date")}</span><input className="inp" type="date" value={logForm.date} onChange={e=>setLogForm({...logForm,date:e.target.value})}/></div>
+                  <div><span className="lbl">{t("log_date")}</span><input className="inp num" type="date" value={logForm.date} onChange={e=>setLogForm({...logForm,date:e.target.value})} style={dateInputStyle}/></div>
                   <div>
                     <span className="lbl">{t("log_photo")}</span>
                     {logForm.photo?(
@@ -2679,13 +2683,13 @@ async function saveEditSession(){
               <div className="msheet">
                 <div className="mhandle"/>
                 <div style={{marginBottom:24}}>
-                  <h2 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:400}}>{isJournal(sel)?`Edit ${t("journal_visit")} ${sessionIdx+1}`:`Edit Session ${sessionIdx+1}`}</h2>
+                  <SessionHeading prefix="Edit" label={isJournal(sel)?t("journal_visit"):"Session"} n={sessionIdx+1} size={28}/>
                   <p style={{fontSize:13,color:"#9A8A78",marginTop:2}}>{sel&&sel.name} · {sel&&sel.clinic}</p>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:16}}>
                   <div>
                     <span className="lbl">{t("log_date")}</span>
-                    <input className="inp" type="date" value={editSessionForm.date} onChange={e=>setEditSessionForm({...editSessionForm,date:e.target.value})}/>
+                    <input className="inp num" type="date" value={editSessionForm.date} onChange={e=>setEditSessionForm({...editSessionForm,date:e.target.value})} style={dateInputStyle}/>
                   </div>
                   <div>
                     <span className="lbl">{t("session_notes")}</span>

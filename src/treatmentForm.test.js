@@ -37,6 +37,8 @@ describe("treatment package form", () => {
     expect(html).toContain("clinic / provider");
     expect(html).toContain("total sessions");
     expect(html).toContain("expiry date");
+    expect(html).toContain("lining-nums");
+    expect(html).toContain("dm sans");
     expect(html).toContain("add treatment");
     expect(html).toContain("package");
     expect(html).toContain("per visit");

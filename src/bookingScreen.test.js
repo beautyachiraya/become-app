@@ -162,6 +162,11 @@ describe("booking screen", () => {
     expect(html).toContain("Pure Skin Spa");
     expect(html).toContain("Promo");
     expect(html).toContain("5 left");
+    expect(html).toContain('type="date"');
+    expect(html).toContain("lining-nums");
+    expect(html).toContain("DM Sans");
+    expect(html).toContain("-webkit-text-fill-color:#1C1612");
+    expect(html).not.toMatch(/type="date"[^>]*Cormorant/);
     expect(html).toContain("This isn't a confirmation from the clinic.");
     expect(buttonOpen(html, "save-visit")).toBe(true);
     expect(html).not.toMatch(/\b(confirmed|reserved|booked)\b/i);
