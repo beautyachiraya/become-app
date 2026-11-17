@@ -184,7 +184,14 @@ describe("message clinic", () => {
 });
 
 describe("booking summary to copy", () => {
-  const profile = { name: "Mali Chen", phone: "0812345678", dateOfBirth: "1997-02-20" };
+  const profile = {
+    name: "Mali Chen",
+    phone: "0812345678",
+    birthday: "1997-02-20",
+    birthDate: "1997-02-20",
+    dateOfBirth: "1997-02-20",
+    dob: "1997-02-20",
+  };
   const visit = {
     clinicName: "Glow Clinic",
     treatmentName: "Botox",
@@ -192,45 +199,56 @@ describe("booking summary to copy", () => {
     branch: "central phuket",
   };
 
-  it("follows the Thai clinic message, including a Buddhist birth year", () => {
-    expect(bookingSummaryText({ locale: "th", profile, visit })).toBe([
+  function expectNoBirthday(text) {
+    expect(text).not.toMatch(/วัน\/เดือน\/ปีเกิด/);
+    expect(text).not.toMatch(/date of birth/i);
+    expect(text).not.toContain("🎂");
+    expect(text).not.toContain("2540");
+    expect(text).not.toContain("1997");
+    expect(text).not.toContain("กพ");
+  }
+
+  it("follows the Thai clinic message and leaves out date of birth", () => {
+    const text = bookingSummaryText({ locale: "th", profile, visit, birthday: "1997-02-20" });
+    expect(text).toBe([
       "ขอทราบข้อมูลเพื่อลงนัดค่ะ",
       "💜 Glow Clinic",
       "👧 ชื่อ-นามสกุล : Mali Chen",
       "📱 เบอร์โทรศัพท์ 0812345678",
-      "🎂 วัน/เดือน/ปีเกิด : 20 กพ 2540",
       "💉 หัตถการที่ทำ : Botox",
       "🏥 สาขาที่สะดวก : central phuket",
       "📅 วันเวลาที่สะดวก : 12/8 13:00",
     ].join("\n"));
+    expectNoBirthday(text);
   });
 
-  it("uses the same fields in English", () => {
-    expect(bookingSummaryText({ locale: "en", profile, visit })).toBe([
+  it("uses the same fields in English and leaves out date of birth", () => {
+    const text = bookingSummaryText({ locale: "en", profile, visit, dateOfBirth: "1997-02-20" });
+    expect(text).toBe([
       "I'd like to book an appointment.",
       "💜 Glow Clinic",
       "👧 Full name: Mali Chen",
       "📱 Phone: 0812345678",
-      "🎂 Date of birth: 20 Feb 1997",
       "💉 Treatment: Botox",
       "🏥 Preferred branch: central phuket",
       "📅 Preferred date and time: 12 Aug, 13:00",
     ].join("\n"));
+    expectNoBirthday(text);
   });
 
-  it("keeps labels when name, phone, birthday, branch, or time are missing", () => {
+  it("keeps labels when name, phone, branch, or time are missing", () => {
     const thai = bookingSummaryText({
       locale: "th",
       clinicName: "Glow Clinic",
       treatment: "Botox",
       date: "2026-08-12",
+      profile: { birthday: "1997-02-20", dob: "20 กพ 2540" },
     });
     expect(thai).toBe([
       "ขอทราบข้อมูลเพื่อลงนัดค่ะ",
       "💜 Glow Clinic",
       "👧 ชื่อ-นามสกุล :",
       "📱 เบอร์โทรศัพท์",
-      "🎂 วัน/เดือน/ปีเกิด :",
       "💉 หัตถการที่ทำ : Botox",
       "🏥 สาขาที่สะดวก :",
       "📅 วันเวลาที่สะดวก : 12/8",
@@ -238,11 +256,12 @@ describe("booking summary to copy", () => {
     expect(thai).not.toContain("0813701551");
     expect(thai).not.toContain("อชิรญา");
     expect(thai).not.toMatch(/\b(confirmed|reserved|booked)\b/i);
+    expectNoBirthday(thai);
 
     const english = bookingSummaryText({
       locale: "en",
       pack: { name: "Botox", clinic: "Glow Clinic", whatsappPhone: "971501234567" },
-      profile: {},
+      profile: { birthDate: "1997-02-20", dateOfBirth: "1997-02-20" },
       date: "2026-08-05",
       time: "09:30",
     });
@@ -251,24 +270,31 @@ describe("booking summary to copy", () => {
       "💜 Glow Clinic",
       "👧 Full name:",
       "📱 Phone:",
-      "🎂 Date of birth:",
       "💉 Treatment: Botox",
       "🏥 Preferred branch:",
       "📅 Preferred date and time: 5 Aug, 09:30",
     ].join("\n"));
     expect(english).not.toContain("971501234567");
     expect(english).not.toContain("0813701551");
+    expectNoBirthday(english);
   });
 
-  it("reads a saved birthday string as-is and does not use the clinic number as her phone", () => {
+  it("ignores a saved birthday and does not use the clinic number as her phone", () => {
     const text = bookingSummaryText({
       locale: "th",
-      profile: { name: "Mali Chen", phone: "0812345678", birthday: "20 กพ 2540" },
+      profile: {
+        name: "Mali Chen",
+        phone: "0812345678",
+        birthday: "20 กพ 2540",
+        birthDate: "1997-02-20",
+        dateOfBirth: "1997-02-20",
+        dob: "20/02/1997",
+      },
       pack: { name: "Botox", clinic: "Glow Clinic", whatsappPhone: "+971 50 123 4567" },
       date: "2026-08-12",
       time: "13:00",
     });
-    expect(text).toContain("🎂 วัน/เดือน/ปีเกิด : 20 กพ 2540");
+    expectNoBirthday(text);
     expect(text).toContain("📱 เบอร์โทรศัพท์ 0812345678");
     expect(text).not.toContain("971");
   });

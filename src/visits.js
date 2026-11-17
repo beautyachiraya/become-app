@@ -322,8 +322,6 @@ export function draftMessage({ pack, plannedAt, locale }) {
   return lines.join("\n");
 }
 
-const MONTHS_TH_NOTE = ["มค", "กพ", "มีค", "เมย", "พค", "มิย", "กค", "สค", "กย", "ตค", "พย", "ธค"];
-
 /** Branch already saved on a visit or package. Never guessed from the clinic name. */
 export function preferredBranch(...sources) {
   for (let i = 0; i < sources.length; i += 1) {
@@ -362,23 +360,6 @@ function compactAppointment(date, time, locale) {
   return timeLabel ? `${when}, ${timeLabel}` : when;
 }
 
-/**
- * Birthday for the clinic message.
- * An ISO date becomes "20 กพ 2540" in Thai (Buddhist year) or "20 Feb 1997" in English.
- * Any other stored text is copied as-is. A blank stays blank.
- */
-function compactBirthday(value, locale) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const parts = calendarParts(raw);
-  if (!parts) return raw;
-  if (locale === "th") {
-    const year = parts.year >= 2400 ? parts.year : parts.year + 543;
-    return `${parts.day} ${MONTHS_TH_NOTE[parts.month - 1]} ${year}`;
-  }
-  return `${parts.day} ${MONTHS_EN[parts.month - 1]} ${parts.year}`;
-}
-
 function summaryField(emoji, label, value, { colon = true, spacedColon = false } = {}) {
   const shown = String(value || "").trim();
   const mark = !colon ? "" : (spacedColon ? " :" : ":");
@@ -400,45 +381,19 @@ function summaryDetails(input) {
     branch: firstString(src.branch, visit.branch, visit.preferredBranch, pack.branch, pack.preferredBranch, pack.location),
     date: firstString(src.date, planned.date),
     time: firstString(src.time, planned.time),
-    birthday: firstString(
-      asDateText(src.birthday),
-      asDateText(profile.birthday),
-      asDateText(profile.birthDate),
-      asDateText(profile.dateOfBirth),
-      asDateText(profile.dob)
-    ),
   };
-}
-
-function asDateText(value) {
-  if (value == null || value === "") return "";
-  if (typeof value === "string") return value.trim();
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return formatDateOnly(value);
-  if (typeof value === "object" && typeof value.toDate === "function") {
-    try {
-      const dt = value.toDate();
-      if (dt instanceof Date && !Number.isNaN(dt.getTime())) return formatDateOnly(dt);
-    } catch (err) {
-      return "";
-    }
-  }
-  if (typeof value === "object" && typeof value.seconds === "number") {
-    const dt = new Date(value.seconds * 1000);
-    if (!Number.isNaN(dt.getTime())) return formatDateOnly(dt);
-  }
-  return "";
 }
 
 /**
  * Text the user copies into LINE or another chat.
  * Filled only from the signed-in profile and this visit. Missing fields keep their label.
+ * Date of birth is not included, even when the profile has a birthday stored.
  * Nothing here is invented, and nothing is sent for her.
  */
 export function bookingSummaryText(input) {
   const locale = input && input.locale === "th" ? "th" : "en";
   const details = summaryDetails(input);
   const when = compactAppointment(details.date, details.time, locale);
-  const birthday = compactBirthday(details.birthday, locale);
   const thai = locale === "th";
   const lines = [
     thai ? "ขอทราบข้อมูลเพื่อลงนัดค่ะ" : "I'd like to book an appointment.",
@@ -448,7 +403,6 @@ export function bookingSummaryText(input) {
     ? [
       ["👧", "ชื่อ-นามสกุล", details.fullName, true],
       ["📱", "เบอร์โทรศัพท์", details.phone, false],
-      ["🎂", "วัน/เดือน/ปีเกิด", birthday, true],
       ["💉", "หัตถการที่ทำ", details.treatment, true],
       ["🏥", "สาขาที่สะดวก", details.branch, true],
       ["📅", "วันเวลาที่สะดวก", when, true],
@@ -456,7 +410,6 @@ export function bookingSummaryText(input) {
     : [
       ["👧", "Full name", details.fullName, true],
       ["📱", "Phone", details.phone, true],
-      ["🎂", "Date of birth", birthday, true],
       ["💉", "Treatment", details.treatment, true],
       ["🏥", "Preferred branch", details.branch, true],
       ["📅", "Preferred date and time", when, true],

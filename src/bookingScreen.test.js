@@ -349,6 +349,9 @@ describe("booking screen", () => {
     expect(summary.value).toContain("ขอทราบข้อมูลเพื่อลงนัดค่ะ");
     expect(summary.value).toContain("ชื่อ-นามสกุล : Mali Chen");
     expect(summary.value).toContain("วันเวลาที่สะดวก : 12/8 13:00");
+    expect(summary.value).not.toMatch(/วัน\/เดือน\/ปีเกิด/);
+    expect(summary.value).not.toMatch(/date of birth/i);
+    expect(summary.value).not.toContain("1997");
     expect(summary.value).not.toContain("0813701551");
     const proto = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
     await act(async () => {
@@ -384,7 +387,7 @@ describe("booking screen", () => {
       status: "planned",
       branch: "central phuket",
     };
-    const profile = { name: "Mali Chen", phone: "" };
+    const profile = { name: "Mali Chen", phone: "", birthday: "1997-02-20", dateOfBirth: "1997-02-20", dob: "20 Feb 1997" };
     act(() => {
       root.render(
         <BookingScreen
@@ -408,6 +411,10 @@ describe("booking screen", () => {
     expect(expected).toContain("Full name: Mali Chen");
     expect(expected).toContain("Phone:");
     expect(expected).not.toMatch(/Phone: \d/);
+    expect(expected).not.toMatch(/date of birth/i);
+    expect(expected).not.toMatch(/วัน\/เดือน\/ปีเกิด/);
+    expect(expected).not.toContain("1997");
+    expect(expected).not.toContain("Feb");
     expect(container.textContent).toContain("Copied");
     act(() => root.unmount());
     container.remove();
